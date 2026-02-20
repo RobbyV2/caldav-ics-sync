@@ -44,14 +44,22 @@ AUTO_SYNC_INTERVAL_MINUTES=60
 
 ### Docker (Recommended)
 
-This service is fully containerized with a multi-stage build.
+This service is fully containerized with a multi-stage build and published to `ghcr.io`.
 
 ```bash
-# Build the application
-docker build -t caldav-to-ics .
-
-# Run the container, binding it to port 3000 and mounting the data directory.
-docker run -p 3000:3000 -v $(pwd)/data:/data caldav-to-ics
+docker run -d \
+  --name caldav-sync \
+  -p 6765:3000 \
+  -e SERVER_HOST=0.0.0.0 \
+  -e SERVER_PORT=3000 \
+  -e CALDAV_URL=https://your-caldav-server.example.com \
+  -e CALDAV_USERNAME=username \
+  -e CALDAV_PASSWORD=secret_password \
+  -e STORAGE_STRATEGY=memory-and-disk \
+  -e STORAGE_DISK_PATH=/data/caldav-sync-cache.ics \
+  -e AUTO_SYNC_INTERVAL_MINUTES=60 \
+  -v $(pwd)/data:/data \
+  ghcr.io/robbyv2/caldav-to-ics:latest
 ```
 
 ### Local Development
