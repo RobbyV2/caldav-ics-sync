@@ -6,7 +6,7 @@ Built with Rust (Axum) backend and Next.js frontend. All configuration and data 
 
 ## Interface
 
-![UI](assets/ui.png)
+![UI](assets/UI.png)
 
 ## Features
 
@@ -29,7 +29,7 @@ docker run -d \
   --name caldav-sync \
   -p 6765:6765 \
   -v $(pwd)/data:/data \
-  ghcr.io/robbyv2/caldav-to-ics:latest
+  ghcr.io/robbyv2/caldav-ics-sync:latest
 ```
 
 Open `http://localhost:6765` to access the dashboard.
