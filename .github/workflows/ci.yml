@@ -46,6 +46,9 @@ jobs:
     name: Build & Publish Docker Image (ghcr.io)
     needs: format_lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     # Only run on push to main WHEN a tag is present OR just rely on tag push matching 'v*'
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     
