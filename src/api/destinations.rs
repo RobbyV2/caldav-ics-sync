@@ -1,0 +1,256 @@
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{delete, get, post, put},
+};
+use serde::Serialize;
+use utoipa::ToSchema;
+
+use super::AppState;
+use crate::db;
+
+#[derive(Serialize, ToSchema)]
+pub struct DestinationResponse {
+    status: String,
+    message: String,
+    destination: Option<db::Destination>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DestinationListResponse {
+    destinations: Vec<db::Destination>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ReverseSyncResult {
+    status: String,
+    message: String,
+    uploaded: usize,
+    total: usize,
+}
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/destinations", get(list_destinations))
+        .route("/destinations", post(create_destination))
+        .route("/destinations/{id}", put(update_destination))
+        .route("/destinations/{id}", delete(delete_destination))
+        .route("/destinations/{id}/sync", post(sync_destination))
+}
+
+#[utoipa::path(get, path = "/api/destinations", responses((status = 200, body = DestinationListResponse)))]
+pub async fn list_destinations(State(state): State<AppState>) -> impl IntoResponse {
+    let db = state.db.lock().unwrap();
+    match db::list_destinations(&db) {
+        Ok(destinations) => (
+            StatusCode::OK,
+            Json(DestinationListResponse { destinations }),
+        )
+            .into_response(),
+        Err(_e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(DestinationListResponse {
+                destinations: vec![],
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[utoipa::path(post, path = "/api/destinations", request_body = db::CreateDestination, responses((status = 201, body = DestinationResponse)))]
+pub async fn create_destination(
+    State(state): State<AppState>,
+    Json(body): Json<db::CreateDestination>,
+) -> impl IntoResponse {
+    let db = state.db.lock().unwrap();
+    match db::create_destination(&db, &body) {
+        Ok(id) => {
+            let dest = db::get_destination(&db, id).ok().flatten();
+            (
+                StatusCode::CREATED,
+                Json(DestinationResponse {
+                    status: "success".into(),
+                    message: format!("Destination created with id {}", id),
+                    destination: dest,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: e.to_string(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[utoipa::path(put, path = "/api/destinations/{id}", request_body = db::UpdateDestination, responses((status = 200, body = DestinationResponse)))]
+pub async fn update_destination(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<db::UpdateDestination>,
+) -> impl IntoResponse {
+    let db = state.db.lock().unwrap();
+    match db::update_destination(&db, id, &body) {
+        Ok(true) => {
+            let dest = db::get_destination(&db, id).ok().flatten();
+            (
+                StatusCode::OK,
+                Json(DestinationResponse {
+                    status: "success".into(),
+                    message: "Destination updated".into(),
+                    destination: dest,
+                }),
+            )
+                .into_response()
+        }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: "Destination not found".into(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: e.to_string(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/destinations/{id}", responses((status = 200, body = DestinationResponse)))]
+pub async fn delete_destination(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let db = state.db.lock().unwrap();
+    match db::delete_destination(&db, id) {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(DestinationResponse {
+                status: "success".into(),
+                message: "Destination deleted".into(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: "Destination not found".into(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: e.to_string(),
+                destination: None,
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[utoipa::path(post, path = "/api/destinations/{id}/sync", responses((status = 200, body = ReverseSyncResult)))]
+pub async fn sync_destination(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let (ics_url, caldav_url, calendar_name, username, password, sync_all, keep_local) = {
+        let db = state.db.lock().unwrap();
+        match db::get_destination(&db, id) {
+            Ok(Some(d)) => (
+                d.ics_url,
+                d.caldav_url,
+                d.calendar_name,
+                d.username,
+                d.password,
+                d.sync_all,
+                d.keep_local,
+            ),
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ReverseSyncResult {
+                        status: "error".into(),
+                        message: "Destination not found".into(),
+                        uploaded: 0,
+                        total: 0,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ReverseSyncResult {
+                        status: "error".into(),
+                        message: e.to_string(),
+                        uploaded: 0,
+                        total: 0,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    match crate::api::reverse_sync::run_reverse_sync(
+        &ics_url,
+        &caldav_url,
+        &calendar_name,
+        &username,
+        &password,
+        sync_all,
+        keep_local,
+    )
+    .await
+    {
+        Ok((uploaded, total)) => {
+            let db = state.db.lock().unwrap();
+            let _ = db::update_destination_sync_status(&db, id, "ok", None);
+            (
+                StatusCode::OK,
+                Json(ReverseSyncResult {
+                    status: "success".into(),
+                    message: format!("Uploaded {} of {} events", uploaded, total),
+                    uploaded,
+                    total,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Reverse sync error for destination {}: {}", id, e);
+            let db = state.db.lock().unwrap();
+            let _ = db::update_destination_sync_status(&db, id, "error", Some(&e.to_string()));
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ReverseSyncResult {
+                    status: "error".into(),
+                    message: e.to_string(),
+                    uploaded: 0,
+                    total: 0,
+                }),
+            )
+                .into_response()
+        }
+    }
+}

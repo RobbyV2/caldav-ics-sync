@@ -2,6 +2,7 @@
   "name": "caldav-ics-sync",
   "description": "CalDAV to ICS sync service",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev",

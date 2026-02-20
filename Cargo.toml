@@ -38,6 +38,8 @@ jsonwebtoken = "10"
 base64 = "0.22"
 icalendar = "0.16"
 roxmltree = "0.20"
+rusqlite = { version = "0.35", features = ["bundled"] }
+utoipa = { version = "5", features = ["axum_extras"] }
 
 [dev-dependencies]
 

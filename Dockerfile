@@ -40,16 +40,20 @@ COPY --from=js-builder /app/public ./public
 # Copy Rust backend
 COPY --from=rust-builder /app/target/release/server /app/server
 
-EXPOSE 3000
-EXPOSE 3001
+EXPOSE 6765
 
-ENV SERVER_PORT=3000
-ENV PORT=3001
-ENV SERVER_PROXY_URL=http://localhost:3001
+ENV SERVER_HOST=0.0.0.0
+ENV SERVER_PORT=6765
+ENV PORT=6766
+ENV SERVER_PROXY_URL=http://localhost:6766
+ENV DATA_DIR=/data
 
-RUN echo '#!/bin/sh\nbun server.js &\n./server\n' > /app/start.sh && \
+RUN printf '#!/bin/sh\nbun server.js &\nNEXT_PID=$!\ntrap "kill $NEXT_PID 2>/dev/null; exit" SIGTERM SIGINT\n./server\nkill $NEXT_PID 2>/dev/null\n' > /app/start.sh && \
     chmod +x /app/start.sh
 
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:6765/api/health || exit 1
 
 CMD ["/app/start.sh"]

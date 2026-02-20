@@ -6,14 +6,6 @@ import "../common.just"
 build:
   cd {{ROOT}} && cargo build --release
 
-# Build WASM module
-build-wasm:
-  cd {{ROOT}} && wasm-pack build --target web --out-dir public/wasm --release
-
-# Build WASM for development
-build-wasm-dev:
-  cd {{ROOT}} && wasm-pack build --target web --out-dir public/wasm --dev
-
 # Build the API server binary for production
 build-api:
   cd {{ROOT}} && cargo build --release --bin server
@@ -26,19 +18,15 @@ build-frontend:
   cd {{ROOT}} && cp -r public .next/standalone/public
 
 # Build everything for production
-build-all: build-wasm build-api build-frontend
+build-all: build-api build-frontend
   @echo ""
-  @echo "✓ Production build complete!"
+  @echo "Production build complete!"
   @echo ""
   @echo "Production deployment (two servers):"
   @echo "  API Binary: {{ROOT}}/target/release/server"
-  @echo "  WASM: {{ROOT}}/public/wasm/"
   @echo "  Frontend: {{ROOT}}/.next/standalone/server.js"
   @echo ""
   @echo "Run both with: just src prod"
-  @echo "Or separately:"
-  @echo "  API: just src start-api"
-  @echo "  Frontend: just src start-frontend"
 
 # Check Rust code without building
 check:
@@ -74,4 +62,4 @@ fmt-ts:
 # Clean build artifacts
 clean:
   cd {{ROOT}} && cargo clean
-  cd {{ROOT}} && rm -rf .next node_modules/.cache public/wasm
+  cd {{ROOT}} && rm -rf .next node_modules/.cache

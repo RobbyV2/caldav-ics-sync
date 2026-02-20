@@ -23,3 +23,5 @@ yarn.lock
 next-env.d.ts
 *.tsbuildinfo
 
+# Vendored libs
+public/windows-ui

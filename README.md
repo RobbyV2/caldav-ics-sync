@@ -1,96 +1,118 @@
-# CalDAV to ICS Synchronizer
+# CalDAV/ICS Sync
 
-A standalone server to synchronize CalDAV events from various enterprise and personal servers (such as Feishu, iCloud, Nextcloud) to a unified ICS file format.
+A self-hosted bidirectional synchronization service between CalDAV servers and ICS files. Manage multiple sync configurations through a web UI or REST API.
 
-This project utilizes a Rust/Axum API backend with XML parsing capabilities alongside a Next.js 15 frontend.
+Built with Rust (Axum) backend and Next.js frontend. All configuration and data stored in SQLite.
 
-## Key Features
+## Interface
 
-- **Automated Background Synchronization:** Set `AUTO_SYNC_INTERVAL_MINUTES` in your `.env` to synchronize calendars in the background.
-- **Feishu / Strict CalDAV Compatibility:** Bypasses parser bugs (e.g., `python-caldav` Issue #459) by interacting directly at the raw WebDAV and `PROPFIND` layers, extracting `VEVENT` data strings without strict payload evaluation.
-- **Flexible Storage Policies:** Save synced calendars to the disk for persistence or keep them in volatile memory.
-- **Tech Stack:**
-  - Rust Backend (Axum, Tokio, Reqwest, Roxmltree) handles requests over port 3000.
-  - Next.js (React 19) provides the synchronization interface proxying requests from port 3001.
+![UI](assets/ui.png)
 
----
+## Features
 
-## Running the Project
+- **CalDAV to ICS (Sources)** -- Pull events from CalDAV servers and serve them as subscribable ICS endpoints
+- **ICS to CalDAV (Destinations)** -- Push events from ICS files to CalDAV servers with configurable sync behavior
+- **Multi-source/destination management** -- Add, edit, and delete configurations via the web UI or API
+- **Custom ICS paths** -- Each source gets a user-defined URL path (e.g., `/ics/work-calendar`)
+- **Automatic background sync** -- Per-source/destination configurable sync intervals
+- **Sync options** -- Control whether to sync past events (`sync_all`) and whether to preserve local CalDAV events not in ICS (`keep_local`)
+- **Trailing slash compatibility** -- Automatically retries CalDAV requests with toggled trailing slash for servers like Feishu/Nextcloud
+- **Password security** -- Passwords are never returned in API responses; stored in plain text for CalDAV authentication
+- **OpenAPI spec** -- Full API documentation at `/api/openapi.json`
+- **Health checks** -- `/api/health` and `/api/health/detailed` endpoints with live status in the UI
+- **Windows Fluent UI** -- Dashboard styled with windows-ui-fabric for a native Windows look
 
-### Environment Initialization
-
-Copy the standard template for environment details.
-
-```bash
-cp .env.example .env.local
-```
-
-Fill in your CalDAV properties within `.env.local`:
-
-```env
-# CalDAV Authentication & URL
-CALDAV_URL=https://your-caldav-server.example.com
-CALDAV_USERNAME=username
-CALDAV_PASSWORD=secret_password
-
-# ICS Storage Configuration
-# Strategies: 'memory-only', 'disk-only', 'memory-and-disk'
-STORAGE_STRATEGY=memory-and-disk
-STORAGE_DISK_PATH=./data/caldav-sync-cache.ics
-
-# Background sync interval in minutes
-AUTO_SYNC_INTERVAL_MINUTES=60
-```
-
-### Docker (Recommended)
-
-This service is fully containerized with a multi-stage build and published to `ghcr.io`.
+## Quick Start (Docker)
 
 ```bash
 docker run -d \
   --name caldav-sync \
-  -p 6765:3000 \
-  -e SERVER_HOST=0.0.0.0 \
-  -e SERVER_PORT=3000 \
-  -e CALDAV_URL=https://your-caldav-server.example.com \
-  -e CALDAV_USERNAME=username \
-  -e CALDAV_PASSWORD=secret_password \
-  -e STORAGE_STRATEGY=memory-and-disk \
-  -e STORAGE_DISK_PATH=/data/caldav-sync-cache.ics \
-  -e AUTO_SYNC_INTERVAL_MINUTES=60 \
+  -p 6765:6765 \
   -v $(pwd)/data:/data \
   ghcr.io/robbyv2/caldav-to-ics:latest
 ```
 
-### Local Development
+Open `http://localhost:6765` to access the dashboard.
 
-To work on the toolset locally:
+## Configuration
 
-1. **Install Frontend Dependencies:**
+All sync configuration (sources, destinations, credentials) is managed through the web UI. The only environment variables are for server tuning:
+
+| Variable           | Default                 | Description                    |
+| ------------------ | ----------------------- | ------------------------------ |
+| `SERVER_HOST`      | `0.0.0.0`               | Bind address                   |
+| `SERVER_PORT`      | `6765`                  | Rust server port (user-facing) |
+| `PORT`             | `6766`                  | Next.js internal port          |
+| `SERVER_PROXY_URL` | `http://localhost:6766` | Internal proxy target          |
+| `DATA_DIR`         | `./data`                | Directory for SQLite database  |
+
+## Concepts
+
+### Sources (CalDAV to ICS)
+
+A source pulls events from a CalDAV server and exposes them as an ICS file at a custom path. Configure:
+
+- CalDAV URL, username, and password
+- ICS path (the URL path where the ICS file is served, e.g., `/ics/my-calendar`)
+- Sync interval (seconds/minutes/hours, 0 for manual only)
+
+### Destinations (ICS to CalDAV)
+
+A destination downloads an ICS file from a URL and uploads each event to a CalDAV server. Inspired by [ics_caldav_sync](https://github.com/przemub/ics_caldav_sync). Configure:
+
+- ICS source URL (the remote ICS file to download)
+- CalDAV server URL, calendar name, username, and password
+- Sync interval (seconds/minutes/hours)
+- `sync_all` -- whether to sync past events or only future ones
+- `keep_local` -- whether to preserve CalDAV events that don't exist in the ICS file
+
+## API
+
+The full OpenAPI spec is available at `/api/openapi.json`.
+
+### Sources
+
+| Method   | Path                      | Description      |
+| -------- | ------------------------- | ---------------- |
+| `GET`    | `/api/sources`            | List all sources |
+| `POST`   | `/api/sources`            | Create a source  |
+| `PUT`    | `/api/sources/:id`        | Update a source  |
+| `DELETE` | `/api/sources/:id`        | Delete a source  |
+| `POST`   | `/api/sources/:id/sync`   | Trigger sync     |
+| `GET`    | `/api/sources/:id/status` | Source status    |
+| `GET`    | `/ics/:path`              | Serve ICS file   |
+
+### Destinations
+
+| Method   | Path                         | Description           |
+| -------- | ---------------------------- | --------------------- |
+| `GET`    | `/api/destinations`          | List all destinations |
+| `POST`   | `/api/destinations`          | Create a destination  |
+| `PUT`    | `/api/destinations/:id`      | Update a destination  |
+| `DELETE` | `/api/destinations/:id`      | Delete a destination  |
+| `POST`   | `/api/destinations/:id/sync` | Trigger reverse sync  |
+
+### Health
+
+| Method | Path                   | Description     |
+| ------ | ---------------------- | --------------- |
+| `GET`  | `/api/health`          | Health check    |
+| `GET`  | `/api/health/detailed` | Detailed health |
+
+## Local Development
+
+All commands use [just](https://github.com/casey/just) via the `jfiles/` directory.
 
 ```bash
-bun install --frozen-lockfile
+just src install    # Install dependencies
+just src dev        # Run both servers (Rust + Next.js) with hot reload
+just src fmt        # Format and lint all code
+just src build-all  # Full production build
+just src prod       # Build and run production
 ```
 
-1. **Launch development servers:**
+Navigate to `http://127.0.0.1:6765`.
 
-```bash
-# Terminal 1 - Next.js
-bun run dev
+## Data Storage
 
-# Terminal 2 - Rust Backend
-cargo run
-```
-
-Next.js acts behind port `3001`, navigate to the Rust Gateway available at `http://127.0.0.1:3000`.
-
----
-
-## User Interface
-
-By visiting the entry port, you can view the status interface to check background completion times and trigger manual synchronization.
-
-## Open Source Details
-
-- **License**: MIT
-- **CI/CD Configuration**: `.github/workflows/ci.yml` tests linting layouts using TS-ESLint Flat architecture and publishes new semantic versions pushed via tags to `ghcr.io`.
+All configuration and synced ICS data is stored in a single SQLite database at `DATA_DIR/caldav-sync.db`. Mount `/data` as a Docker volume for persistence.
