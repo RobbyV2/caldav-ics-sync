@@ -1,5 +1,13 @@
 # CalDAV/ICS Sync
 
+<div align="center">
+  <p>
+    <img src="https://github.com/RobbyV2/caldav-ics-sync/actions/workflows/ci.yml/badge.svg" alt="CI">
+    <img src="https://img.shields.io/github/v/release/RobbyV2/caldav-ics-sync?color=green&label=Version" alt="Version">
+    <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+  </p>
+</div>
+
 A self-hosted bidirectional synchronization service between CalDAV servers and ICS files. Manage multiple sync configurations through a web UI or REST API.
 
 Built with Rust (Axum) backend and Next.js frontend. All configuration and data stored in SQLite.
