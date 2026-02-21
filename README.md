@@ -26,13 +26,59 @@ Built with Rust (Axum) backend and Next.js frontend. All configuration and data 
 
 ```bash
 docker run -d \
-  --name caldav-sync \
+  --name cal-sync \
   -p 6765:6765 \
   -v $(pwd)/data:/data \
   ghcr.io/robbyv2/caldav-ics-sync:latest
 ```
 
 Open `http://localhost:6765` to access the dashboard.
+
+## Docker Compose
+
+### Basic
+
+```yaml
+services:
+  cal-sync:
+    image: ghcr.io/robbyv2/caldav-ics-sync:latest
+    container_name: cal-sync
+    ports:
+      - "6765:6765"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+```
+
+### With HTTP Basic Auth
+
+Since the app has no built-in authentication, you can front it with an nginx basic auth proxy:
+
+```yaml
+services:
+  cal-sync:
+    image: ghcr.io/robbyv2/caldav-ics-sync:latest
+    container_name: cal-sync
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  proxy:
+    image: beevelop/nginx-basic-auth
+    container_name: cal-sync-proxy
+    ports:
+      - "6765:80"
+    environment:
+      - FORWARD_HOST=cal-sync
+      - FORWARD_PORT=6765
+      - HTPASSWD=admin:$$apr1$$odHl5EJN$$KbxMfo86Qdve2FH4owePn.
+    depends_on:
+      - cal-sync
+    restart: unless-stopped
+```
+
+> [!NOTE]
+> Generate your own credentials with `htpasswd -nb admin yourpassword` and replace the `HTPASSWD` value. Use `$$` to escape `$` signs in docker compose.
 
 ## Configuration
 

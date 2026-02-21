@@ -45,11 +45,19 @@ EXPOSE 6765
 ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=6765
 ENV PORT=6766
+ENV HOSTNAME=0.0.0.0
 ENV SERVER_PROXY_URL=http://localhost:6766
 ENV DATA_DIR=/data
 
-RUN printf '#!/bin/sh\nbun server.js &\nNEXT_PID=$!\ntrap "kill $NEXT_PID 2>/dev/null; exit" SIGTERM SIGINT\n./server\nkill $NEXT_PID 2>/dev/null\n' > /app/start.sh && \
-    chmod +x /app/start.sh
+COPY <<'EOF' /app/start.sh
+#!/bin/sh
+bun server.js &
+NEXT_PID=$!
+trap "kill $NEXT_PID 2>/dev/null; exit" TERM INT
+./server
+kill $NEXT_PID 2>/dev/null
+EOF
+RUN chmod +x /app/start.sh
 
 VOLUME ["/data"]
 
