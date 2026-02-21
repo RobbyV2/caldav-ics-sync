@@ -47,5 +47,11 @@ rusqlite = { version = "0.35", features = ["bundled"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+axum = { version = "0.8", features = ["ws", "http2"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+base64 = "0.22"
 
 # Binaries are auto-discovered from src/bin/

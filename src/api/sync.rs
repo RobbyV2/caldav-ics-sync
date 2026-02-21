@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::{Client, header};
 
-fn toggle_slash(url: &str) -> String {
+pub fn toggle_slash(url: &str) -> String {
     if url.ends_with('/') {
         url.trim_end_matches('/').to_string()
     } else {
