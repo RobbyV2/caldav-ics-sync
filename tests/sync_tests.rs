@@ -422,7 +422,7 @@ async fn reverse_sync_uploads_events() {
     ];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::CREATED).await;
 
-    let (uploaded, total) = run_reverse_sync(
+    let (uploaded, _skipped, total) = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/calendars", caldav_addr),
         "personal",
@@ -444,7 +444,7 @@ async fn reverse_sync_handles_double_calendar_path() {
     let events = [("uid-d1", "Double", "20250701T080000Z", "20250701T090000Z")];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::CREATED).await;
 
-    let (uploaded, total) = run_reverse_sync(
+    let (uploaded, _skipped, total) = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/calendars/personal", caldav_addr),
         "personal",
@@ -470,7 +470,7 @@ async fn reverse_sync_reports_correct_uploaded_count() {
     ];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::NO_CONTENT).await;
 
-    let (uploaded, total) = run_reverse_sync(
+    let (uploaded, _skipped, total) = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/", caldav_addr),
         "work",
@@ -509,4 +509,61 @@ async fn reverse_sync_returns_error_when_uploads_fail() {
         err_msg.contains("failed"),
         "Expected failure message, got: {err_msg}"
     );
+}
+
+#[tokio::test]
+async fn reverse_sync_skips_unchanged_events() {
+    let events = [
+        (
+            "uid-same",
+            "Same Event",
+            "20250601T080000Z",
+            "20250601T090000Z",
+        ),
+        (
+            "uid-new",
+            "New Event",
+            "20250601T100000Z",
+            "20250601T110000Z",
+        ),
+    ];
+    let ics_feed = mock_ics_feed(&events);
+
+    // ICS feed server
+    let ics_state = std::sync::Arc::new(MockState {
+        propfind_body: String::new(),
+        report_body: ics_feed,
+        put_status: StatusCode::OK,
+    });
+    let ics_addr = start_mock_server(ics_state).await;
+
+    // CalDAV server that already has uid-same (returned via REPORT)
+    let existing = [(
+        "uid-same",
+        "Same Event",
+        "20250601T080000Z",
+        "20250601T090000Z",
+    )];
+    let caldav_state = std::sync::Arc::new(MockState {
+        propfind_body: String::new(),
+        report_body: mock_report_response(&existing),
+        put_status: StatusCode::CREATED,
+    });
+    let caldav_addr = start_mock_server(caldav_state).await;
+
+    let (uploaded, skipped, total) = run_reverse_sync(
+        &format!("http://{}/feed.ics", ics_addr),
+        &format!("http://{}/dav/", caldav_addr),
+        "cal",
+        "user",
+        "pass",
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 2);
+    assert_eq!(skipped, 1, "uid-same should be skipped");
+    assert_eq!(uploaded, 1, "only uid-new should be uploaded");
 }

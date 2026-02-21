@@ -30,6 +30,7 @@ pub struct ReverseSyncResult {
     status: String,
     message: String,
     uploaded: usize,
+    skipped: usize,
     total: usize,
 }
 
@@ -222,6 +223,7 @@ pub async fn sync_destination(
                         status: "error".into(),
                         message: "Destination not found".into(),
                         uploaded: 0,
+                        skipped: 0,
                         total: 0,
                     }),
                 )
@@ -234,6 +236,7 @@ pub async fn sync_destination(
                         status: "error".into(),
                         message: e.to_string(),
                         uploaded: 0,
+                        skipped: 0,
                         total: 0,
                     }),
                 )
@@ -253,15 +256,19 @@ pub async fn sync_destination(
     )
     .await
     {
-        Ok((uploaded, total)) => {
+        Ok((uploaded, skipped, total)) => {
             let db = state.db.lock().unwrap();
             let _ = db::update_destination_sync_status(&db, id, "ok", None);
             (
                 StatusCode::OK,
                 Json(ReverseSyncResult {
                     status: "success".into(),
-                    message: format!("Uploaded {} of {} events", uploaded, total),
+                    message: format!(
+                        "Uploaded {} of {} events ({} unchanged, skipped)",
+                        uploaded, total, skipped
+                    ),
                     uploaded,
+                    skipped,
                     total,
                 }),
             )
@@ -277,6 +284,7 @@ pub async fn sync_destination(
                     status: "error".into(),
                     message: e.to_string(),
                     uploaded: 0,
+                    skipped: 0,
                     total: 0,
                 }),
             )
