@@ -119,8 +119,6 @@ fn spawn_sync_task<F, Fut>(
 
     let handle = tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
-
             let strategy = ExponentialBackoff::from_millis(RETRY_BASE_MS)
                 .max_delay(Duration::from_millis(RETRY_MAX_MS))
                 .take(MAX_RETRIES);
@@ -142,6 +140,8 @@ fn spawn_sync_task<F, Fut>(
                     }
                 }
             }
+
+            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
         }
         try_remove(&registry_ref, &key_clone, generation);
     });
