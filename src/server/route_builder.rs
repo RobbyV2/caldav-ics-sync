@@ -61,23 +61,44 @@ async fn proxy_to_nextjs(State(proxy_url): State<Arc<String>>, mut req: Request)
     }
 }
 
-async fn serve_ics(
-    State(state): State<crate::api::AppState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match crate::db::get_ics_data_by_path(&db, &path) {
+fn ics_response(result: anyhow::Result<Option<String>>) -> Response {
+    match result {
         Ok(Some(content)) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "text/calendar")
             .body(axum::body::Body::from(content))
-            .unwrap(),
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         Ok(None) => (StatusCode::NOT_FOUND, "ICS not found").into_response(),
         Err(e) => {
             tracing::error!("Error serving ICS: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
         }
     }
+}
+
+async fn serve_ics(
+    State(state): State<crate::api::AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    let Ok(db) = state.db.lock() else {
+        tracing::error!("DB lock poisoned serving ICS /{}", path);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+    };
+    ics_response(crate::db::get_ics_data_by_path(&db, &path))
+}
+
+async fn serve_public_ics(
+    State(state): State<crate::api::AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    if path.contains("..") || path.starts_with('/') {
+        return (StatusCode::BAD_REQUEST, "Invalid path").into_response();
+    }
+    let Ok(db) = state.db.lock() else {
+        tracing::error!("DB lock poisoned serving public ICS /{}", path);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+    };
+    ics_response(crate::db::get_ics_data_by_public_path(&db, &path))
 }
 
 pub async fn register_routes(state: crate::api::AppState, proxy_url: &str) -> Router {
@@ -90,6 +111,7 @@ pub async fn register_routes(state: crate::api::AppState, proxy_url: &str) -> Ro
 
     Router::new()
         .nest("/api", api_routes)
+        .route("/ics/public/{*path}", get(serve_public_ics))
         .route("/ics/{*path}", get(serve_ics))
         .merge(fallback_router)
         .with_state(state)

@@ -1,9 +1,11 @@
 use crate::api::AppState;
 use crate::api::destinations::{DestinationListResponse, DestinationResponse, ReverseSyncResult};
 use crate::api::health::{DetailedHealthResponse, HealthResponse};
+use crate::api::source_paths::{SourcePathListResponse, SourcePathResponse};
 use crate::api::sources::{SourceListResponse, SourceResponse, SyncResult};
 use crate::db::{
-    CreateDestination, CreateSource, Destination, Source, UpdateDestination, UpdateSource,
+    CreateDestination, CreateSource, CreateSourcePath, Destination, Source, SourcePath,
+    UpdateDestination, UpdateSource, UpdateSourcePath,
 };
 use axum::{Json, Router, response::IntoResponse, routing::get};
 use utoipa::OpenApi;
@@ -17,6 +19,10 @@ use utoipa::OpenApi;
         crate::api::sources::delete_source_handler,
         crate::api::sources::sync_source,
         crate::api::sources::source_status,
+        crate::api::source_paths::list_source_paths,
+        crate::api::source_paths::create_source_path,
+        crate::api::source_paths::update_source_path,
+        crate::api::source_paths::delete_source_path,
         crate::api::destinations::list_destinations,
         crate::api::destinations::create_destination,
         crate::api::destinations::update_destination,
@@ -32,6 +38,11 @@ use utoipa::OpenApi;
         SourceResponse,
         SourceListResponse,
         SyncResult,
+        SourcePath,
+        CreateSourcePath,
+        UpdateSourcePath,
+        SourcePathResponse,
+        SourcePathListResponse,
         Destination,
         CreateDestination,
         UpdateDestination,

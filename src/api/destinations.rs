@@ -9,12 +9,14 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::AppState;
+use crate::auto_sync::{self, AutoSyncKey};
 use crate::db;
 
 #[derive(Serialize, ToSchema)]
 pub struct DestinationResponse {
     status: String,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     destination: Option<db::Destination>,
 }
 
@@ -49,10 +51,12 @@ pub async fn list_destinations(State(state): State<AppState>) -> impl IntoRespon
             Json(DestinationListResponse { destinations }),
         )
             .into_response(),
-        Err(_e) => (
+        Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(DestinationListResponse {
-                destinations: vec![],
+            Json(DestinationResponse {
+                status: "error".into(),
+                message: e.to_string(),
+                destination: None,
             }),
         )
             .into_response(),
@@ -64,30 +68,40 @@ pub async fn create_destination(
     State(state): State<AppState>,
     Json(body): Json<db::CreateDestination>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::create_destination(&db, &body) {
-        Ok(id) => {
-            let dest = db::get_destination(&db, id).ok().flatten();
-            (
-                StatusCode::CREATED,
-                Json(DestinationResponse {
-                    status: "success".into(),
-                    message: format!("Destination created with id {}", id),
-                    destination: dest,
-                }),
-            )
-                .into_response()
+    let (id, dest) = {
+        let db = state.db.lock().unwrap();
+        match db::create_destination(&db, &body) {
+            Ok(id) => {
+                let dest = db::get_destination(&db, id).ok().flatten();
+                (id, dest)
+            }
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(DestinationResponse {
+                        status: "error".into(),
+                        message: e.to_string(),
+                        destination: None,
+                    }),
+                )
+                    .into_response();
+            }
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(DestinationResponse {
-                status: "error".into(),
-                message: e.to_string(),
-                destination: None,
-            }),
-        )
-            .into_response(),
+    };
+
+    if let Some(ref d) = dest {
+        auto_sync::register_destination(&state.sync_tasks, &state, d);
     }
+
+    (
+        StatusCode::CREATED,
+        Json(DestinationResponse {
+            status: "success".into(),
+            message: format!("Destination created with id {}", id),
+            destination: dest,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(put, path = "/api/destinations/{id}", request_body = db::UpdateDestination, responses((status = 200, body = DestinationResponse)))]
@@ -96,39 +110,48 @@ pub async fn update_destination(
     Path(id): Path<i64>,
     Json(body): Json<db::UpdateDestination>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::update_destination(&db, id, &body) {
-        Ok(true) => {
-            let dest = db::get_destination(&db, id).ok().flatten();
-            (
-                StatusCode::OK,
-                Json(DestinationResponse {
-                    status: "success".into(),
-                    message: "Destination updated".into(),
-                    destination: dest,
-                }),
-            )
-                .into_response()
+    let dest = {
+        let db = state.db.lock().unwrap();
+        match db::update_destination(&db, id, &body) {
+            Ok(true) => db::get_destination(&db, id).ok().flatten(),
+            Ok(false) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(DestinationResponse {
+                        status: "error".into(),
+                        message: "Destination not found".into(),
+                        destination: None,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(DestinationResponse {
+                        status: "error".into(),
+                        message: e.to_string(),
+                        destination: None,
+                    }),
+                )
+                    .into_response();
+            }
         }
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(DestinationResponse {
-                status: "error".into(),
-                message: "Destination not found".into(),
-                destination: None,
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(DestinationResponse {
-                status: "error".into(),
-                message: e.to_string(),
-                destination: None,
-            }),
-        )
-            .into_response(),
+    };
+
+    if let Some(ref d) = dest {
+        auto_sync::register_destination(&state.sync_tasks, &state, d);
     }
+
+    (
+        StatusCode::OK,
+        Json(DestinationResponse {
+            status: "success".into(),
+            message: "Destination updated".into(),
+            destination: dest,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(delete, path = "/api/destinations/{id}", responses((status = 200, body = DestinationResponse)))]
@@ -136,17 +159,24 @@ pub async fn delete_destination(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::delete_destination(&db, id) {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(DestinationResponse {
-                status: "success".into(),
-                message: "Destination deleted".into(),
-                destination: None,
-            }),
-        )
-            .into_response(),
+    let result = {
+        let db = state.db.lock().unwrap();
+        db::delete_destination(&db, id)
+    };
+
+    match result {
+        Ok(true) => {
+            auto_sync::cancel(&state.sync_tasks, &AutoSyncKey::Destination(id));
+            (
+                StatusCode::OK,
+                Json(DestinationResponse {
+                    status: "success".into(),
+                    message: "Destination deleted".into(),
+                    destination: None,
+                }),
+            )
+                .into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(DestinationResponse {

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, ReactNode } from 'react'
+import React, { useState, useEffect, useCallback, ReactNode } from 'react'
+import { api } from './api'
 
 // --- Types ---
 
@@ -15,6 +16,8 @@ interface Source {
   last_sync_status: string | null
   last_sync_error: string | null
   created_at: string
+  public_ics: boolean
+  public_ics_path: string | null
 }
 
 interface Destination {
@@ -53,6 +56,8 @@ const emptySrcForm = {
   sync_interval_hours: 1,
   sync_interval_minutes: 0,
   sync_interval_seconds: 0,
+  public_ics: false,
+  public_ics_path: '',
 }
 
 const emptyDestForm = {
@@ -78,6 +83,20 @@ function fromSecs(secs: number): { hours: number; minutes: number; seconds: numb
   const minutes = Math.floor((secs % 3600) / 60)
   const seconds = secs % 60
   return { hours, minutes, seconds }
+}
+
+function generatePublicPath(name: string): string {
+  const slug = (name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(6)), b =>
+    b.toString(36).padStart(2, '0')
+  )
+    .join('')
+    .slice(0, 8)
+  return slug ? `${slug}/${random}` : random
 }
 
 function formatInterval(secs: number): string {
@@ -143,6 +162,30 @@ function IntervalInput({
 }
 
 // --- Helpers ---
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <button
+      type="button"
+      className="app-btn app-btn-subtle"
+      style={{ padding: '2px 8px', fontSize: 12, marginLeft: 4 }}
+      onClick={e => {
+        e.stopPropagation()
+        navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }}
+    >
+      {copied ? (
+        <span style={{ color: '#0f0', fontWeight: 'bold' }}>Copied!</span>
+      ) : (
+        <i className="icons10-copy" />
+      )}
+    </button>
+  )
+}
 
 function formatUptime(secs: number): string {
   const h = Math.floor(secs / 3600)
@@ -391,36 +434,18 @@ export default function Home() {
   // ── Data fetching ──────────────────────────────────────────────
 
   const fetchSources = useCallback(async () => {
-    try {
-      const res = await fetch('/api/sources')
-      if (res.ok) {
-        const data = await res.json()
-        setSources(data.sources)
-      }
-    } catch {
-      /* network error */
-    }
+    const { data } = await api.get<{ sources: Source[] }>('/api/sources')
+    if (data) setSources(data.sources)
   }, [])
 
   const fetchDestinations = useCallback(async () => {
-    try {
-      const res = await fetch('/api/destinations')
-      if (res.ok) {
-        const data = await res.json()
-        setDestinations(data.destinations)
-      }
-    } catch {
-      /* network error */
-    }
+    const { data } = await api.get<{ destinations: Destination[] }>('/api/destinations')
+    if (data) setDestinations(data.destinations)
   }, [])
 
   const fetchHealth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/health/detailed')
-      setHealth(res.ok ? await res.json() : { status: 'unreachable' })
-    } catch {
-      setHealth({ status: 'unreachable' })
-    }
+    const { data } = await api.get<HealthStatus>('/api/health/detailed')
+    setHealth(data ?? { status: 'unreachable' })
   }, [])
 
   useEffect(() => {
@@ -444,43 +469,47 @@ export default function Home() {
     setMessage({ text, type })
   }
 
-  async function apiSubmit(url: string, method: string, body: unknown, onSuccess: () => void) {
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const data = await res.json()
-      flash(data.message, res.ok ? 'success' : 'error')
-      if (res.ok) onSuccess()
-    } catch (err) {
-      flash(err instanceof Error ? err.message : 'Request failed', 'error')
+  async function apiSubmit(
+    url: string,
+    method: 'POST' | 'PUT',
+    body: unknown,
+    onSuccess: () => void
+  ) {
+    const { data, error } =
+      method === 'POST'
+        ? await api.post<{ message?: string }>(url, body)
+        : await api.put<{ message?: string }>(url, body)
+
+    if (error) {
+      flash(error, 'error')
+    } else {
+      flash(data?.message || 'Success', 'success')
+      onSuccess()
     }
   }
 
   async function apiSync(syncKeyPrefix: string, id: number, url: string, refresh: () => void) {
     setSyncing(p => ({ ...p, [`${syncKeyPrefix}-${id}`]: true }))
     try {
-      const res = await fetch(url, { method: 'POST' })
-      const data = await res.json()
-      flash(data.message, res.ok ? 'success' : 'error')
-      refresh()
-    } catch {
-      flash('Sync request failed', 'error')
+      const { data, error } = await api.post<{ message?: string }>(url)
+      if (error) {
+        flash(error, 'error')
+      } else {
+        flash(data?.message || 'Success', 'success')
+        refresh()
+      }
     } finally {
       setSyncing(p => ({ ...p, [`${syncKeyPrefix}-${id}`]: false }))
     }
   }
 
   async function apiDelete(url: string, refresh: () => void) {
-    try {
-      const res = await fetch(url, { method: 'DELETE' })
-      const data = await res.json()
-      flash(data.message, res.ok ? 'success' : 'error')
+    const { data, error } = await api.delete<{ message?: string }>(url)
+    if (error) {
+      flash(error, 'error')
+    } else {
+      flash(data?.message || 'Success', 'success')
       refresh()
-    } catch {
-      flash('Delete failed', 'error')
     }
     setDeletePrompt(null)
   }
@@ -515,6 +544,8 @@ export default function Home() {
       sync_interval_hours: hours,
       sync_interval_minutes: minutes,
       sync_interval_seconds: seconds,
+      public_ics: src.public_ics,
+      public_ics_path: src.public_ics_path || '',
     })
     setEditingSrc(src)
     setSrcDialogOpen(true)
@@ -532,6 +563,7 @@ export default function Home() {
     const { sync_interval_hours, sync_interval_minutes, sync_interval_seconds, ...rest } = srcForm
     const body = {
       ...rest,
+      public_ics_path: rest.public_ics_path?.trim() || null,
       sync_interval_secs: toSecs(sync_interval_hours, sync_interval_minutes, sync_interval_seconds),
     }
     await apiSubmit(url, method, body, () => {
@@ -613,26 +645,49 @@ export default function Home() {
   }
 
   function renderSourceExtra(src: Source) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const standardUrl = `${origin}/ics/${src.ics_path}`
     return (
-      <div className="detail-row">
-        <strong>ICS URL</strong>
-        <span className="ics-url-row">
-          <a href={`/ics/${src.ics_path}`} target="_blank" rel="noreferrer">
-            {typeof window !== 'undefined'
-              ? `${window.location.origin}/ics/${src.ics_path}`
-              : `/ics/${src.ics_path}`}
-          </a>
-          <button
-            className="app-btn app-btn-subtle"
-            style={{ padding: '2px 8px', fontSize: 12 }}
-            onClick={() =>
-              navigator.clipboard.writeText(`${window.location.origin}/ics/${src.ics_path}`)
-            }
-          >
-            <i className="icons10-copy" />
-          </button>
-        </span>
-      </div>
+      <>
+        <div className="detail-row">
+          <strong>ICS URL</strong>
+          <span className="ics-url-row">
+            <a href={`/ics/${src.ics_path}`} target="_blank" rel="noreferrer">
+              {standardUrl}
+            </a>
+            <CopyButton text={standardUrl} />
+          </span>
+        </div>
+        {src.public_ics && (
+          <div className="detail-row">
+            <strong>Public ICS URL</strong>
+            <span className="ics-url-row">
+              {src.public_ics_path ? (
+                (() => {
+                  const publicUrl = `${origin}/ics/public/${src.public_ics_path}`
+                  return (
+                    <>
+                      <a
+                        href={`/ics/public/${src.public_ics_path}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {publicUrl}
+                      </a>
+                      <CopyButton text={publicUrl} />
+                    </>
+                  )
+                })()
+              ) : (
+                <>
+                  <span>Same as ICS URL (no auth required)</span>
+                  <CopyButton text={standardUrl} />
+                </>
+              )}
+            </span>
+          </div>
+        )}
+      </>
     )
   }
 
@@ -890,6 +945,41 @@ export default function Home() {
           seconds={srcForm.sync_interval_seconds}
           onChange={(field, value) => setSrcForm(p => ({ ...p, [field]: value }))}
         />
+        <div className="form-field full-width">
+          <div className="form-checkbox">
+            <input
+              type="checkbox"
+              id="public-ics"
+              checked={srcForm.public_ics}
+              onChange={e => {
+                const checked = e.target.checked
+                setSrcForm(p => ({
+                  ...p,
+                  public_ics: checked,
+                  public_ics_path: checked ? generatePublicPath(p.name || p.username) : '',
+                }))
+              }}
+            />
+            <label htmlFor="public-ics">
+              Make ICS URL public (for services like Google Calendar that don't support HTTP Basic
+              Auth)
+            </label>
+          </div>
+          {srcForm.public_ics && (
+            <div style={{ marginTop: 8 }}>
+              <label style={{ fontSize: 13, opacity: 0.8, display: 'block', marginBottom: 6 }}>
+                Custom public path (leave empty to make standard URL public)
+              </label>
+              <input
+                className="app-input-text"
+                type="text"
+                value={srcForm.public_ics_path}
+                onChange={e => setSrcForm(p => ({ ...p, public_ics_path: e.target.value }))}
+                placeholder="e.g. my-calendar/abc123"
+              />
+            </div>
+          )}
+        </div>
       </FormDialog>
 
       {/* ─── Destination form dialog ─── */}

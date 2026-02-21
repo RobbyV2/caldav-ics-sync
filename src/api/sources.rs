@@ -1,4 +1,5 @@
 use crate::api::AppState;
+use crate::auto_sync::{self, AutoSyncKey};
 use crate::db;
 use axum::{
     Json, Router,
@@ -53,30 +54,40 @@ async fn create_source(
     State(state): State<AppState>,
     Json(body): Json<db::CreateSource>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::create_source(&db, &body) {
-        Ok(id) => {
-            let source = db::get_source(&db, id).ok().flatten();
-            (
-                StatusCode::CREATED,
-                Json(SourceResponse {
-                    status: "success".into(),
-                    message: format!("Source created with id {}", id),
-                    source,
-                }),
-            )
-                .into_response()
+    let (id, source) = {
+        let db = state.db.lock().unwrap();
+        match db::create_source(&db, &body) {
+            Ok(id) => {
+                let source = db::get_source(&db, id).ok().flatten();
+                (id, source)
+            }
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(SourceResponse {
+                        status: "error".into(),
+                        message: e.to_string(),
+                        source: None,
+                    }),
+                )
+                    .into_response();
+            }
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(SourceResponse {
-                status: "error".into(),
-                message: e.to_string(),
-                source: None,
-            }),
-        )
-            .into_response(),
+    };
+
+    if let Some(ref s) = source {
+        auto_sync::register_source(&state.sync_tasks, &state, s);
     }
+
+    (
+        StatusCode::CREATED,
+        Json(SourceResponse {
+            status: "success".into(),
+            message: format!("Source created with id {}", id),
+            source,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(put, path = "/api/sources/{id}", request_body = db::UpdateSource, responses((status = 200, body = SourceResponse)))]
@@ -85,39 +96,48 @@ async fn update_source(
     Path(id): Path<i64>,
     Json(body): Json<db::UpdateSource>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::update_source(&db, id, &body) {
-        Ok(true) => {
-            let source = db::get_source(&db, id).ok().flatten();
-            (
-                StatusCode::OK,
-                Json(SourceResponse {
-                    status: "success".into(),
-                    message: "Source updated".into(),
-                    source,
-                }),
-            )
-                .into_response()
+    let source = {
+        let db = state.db.lock().unwrap();
+        match db::update_source(&db, id, &body) {
+            Ok(true) => db::get_source(&db, id).ok().flatten(),
+            Ok(false) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(SourceResponse {
+                        status: "error".into(),
+                        message: "Source not found".into(),
+                        source: None,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(SourceResponse {
+                        status: "error".into(),
+                        message: e.to_string(),
+                        source: None,
+                    }),
+                )
+                    .into_response();
+            }
         }
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(SourceResponse {
-                status: "error".into(),
-                message: "Source not found".into(),
-                source: None,
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(SourceResponse {
-                status: "error".into(),
-                message: e.to_string(),
-                source: None,
-            }),
-        )
-            .into_response(),
+    };
+
+    if let Some(ref s) = source {
+        auto_sync::register_source(&state.sync_tasks, &state, s);
     }
+
+    (
+        StatusCode::OK,
+        Json(SourceResponse {
+            status: "success".into(),
+            message: "Source updated".into(),
+            source,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(delete, path = "/api/sources/{id}", responses((status = 200, body = SourceResponse)))]
@@ -125,17 +145,24 @@ async fn delete_source_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let db = state.db.lock().unwrap();
-    match db::delete_source(&db, id) {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(SourceResponse {
-                status: "success".into(),
-                message: "Source deleted".into(),
-                source: None,
-            }),
-        )
-            .into_response(),
+    let result = {
+        let db = state.db.lock().unwrap();
+        db::delete_source(&db, id)
+    };
+
+    match result {
+        Ok(true) => {
+            auto_sync::cancel(&state.sync_tasks, &AutoSyncKey::Source(id));
+            (
+                StatusCode::OK,
+                Json(SourceResponse {
+                    status: "success".into(),
+                    message: "Source deleted".into(),
+                    source: None,
+                }),
+            )
+                .into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(SourceResponse {

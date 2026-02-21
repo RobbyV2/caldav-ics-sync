@@ -17,9 +17,10 @@ Built with Rust (Axum) backend and Next.js frontend. All configuration and data 
 - **Automatic background sync** -- Per-source/destination configurable sync intervals
 - **Sync options** -- Control whether to sync past events (`sync_all`) and whether to preserve local CalDAV events not in ICS (`keep_local`)
 - **Trailing slash compatibility** -- Automatically retries CalDAV requests with toggled trailing slash for servers like Feishu/Nextcloud
-- **Password security** -- Passwords are never returned in API responses; stored in plain text for CalDAV authentication
+- **Password security** -- Passwords are never returned in API responses; stored in plain text for CalDAV authentication. Sending an empty password on update preserves the existing value
 - **OpenAPI spec** -- Full API documentation at `/api/openapi.json`
 - **Health checks** -- `/api/health` and `/api/health/detailed` endpoints with live status in the UI
+- **Public ICS URLs** - Optionally expose ICS feeds without authentication for Google Calendar and similar services
 - **Windows Fluent UI** -- Dashboard styled with windows-ui-fabric for a native Windows look
 
 ## Quick Start (Docker)
@@ -86,6 +87,15 @@ A source pulls events from a CalDAV server and exposes them as an ICS file at a 
 - ICS path (the URL path where the ICS file is served, e.g., `/ics/my-calendar`)
 - Sync interval (seconds/minutes/hours, 0 for manual only)
 
+#### Public ICS URLs
+
+Sources can optionally make their ICS feed publicly accessible (without HTTP Basic Auth). Enable via the "Make ICS URL public" checkbox when creating or editing a source.
+
+- **With custom path**: A dedicated URL at `/ics/public/{custom-path}` serves the feed without auth. The standard `/ics/{path}` still requires credentials.
+- **Without custom path** (field left empty): The standard `/ics/{path}` URL becomes accessible without auth.
+
+This is useful for services like Google Calendar that cannot supply HTTP Basic Auth credentials when subscribing to ICS feeds.
+
 ### Destinations (ICS to CalDAV)
 
 A destination downloads an ICS file from a URL and uploads each event to a CalDAV server. Inspired by [ics_caldav_sync](https://github.com/przemub/ics_caldav_sync). Configure:
@@ -102,15 +112,29 @@ The full OpenAPI spec is available at `/api/openapi.json`.
 
 ### Sources
 
-| Method   | Path                      | Description      |
-| -------- | ------------------------- | ---------------- |
-| `GET`    | `/api/sources`            | List all sources |
-| `POST`   | `/api/sources`            | Create a source  |
-| `PUT`    | `/api/sources/:id`        | Update a source  |
-| `DELETE` | `/api/sources/:id`        | Delete a source  |
-| `POST`   | `/api/sources/:id/sync`   | Trigger sync     |
-| `GET`    | `/api/sources/:id/status` | Source status    |
-| `GET`    | `/ics/:path`              | Serve ICS file   |
+| Method   | Path                      | Description                              |
+| -------- | ------------------------- | ---------------------------------------- |
+| `GET`    | `/api/sources`            | List all sources                         |
+| `POST`   | `/api/sources`            | Create a source                          |
+| `PUT`    | `/api/sources/:id`        | Update a source                          |
+| `DELETE` | `/api/sources/:id`        | Delete a source                          |
+| `POST`   | `/api/sources/:id/sync`   | Trigger sync                             |
+| `GET`    | `/api/sources/:id/status` | Source status                            |
+| `GET`    | `/ics/:path`              | Serve ICS file                           |
+| `GET`    | `/ics/public/:path`       | Serve public ICS feed (no auth required) |
+
+### Source Paths
+
+Additional ICS/public paths per source, managed via API (not shown in the UI).
+
+| Method   | Path                              | Description             |
+| -------- | --------------------------------- | ----------------------- |
+| `GET`    | `/api/sources/:id/paths`          | List paths for a source |
+| `POST`   | `/api/sources/:id/paths`          | Add a path to a source  |
+| `PUT`    | `/api/sources/:id/paths/:path_id` | Update a source path    |
+| `DELETE` | `/api/sources/:id/paths/:path_id` | Delete a source path    |
+
+Each source path has a `path` (served at `/ics/{path}`) and an `is_public` flag. When `is_public` is true, the path is also accessible without authentication at `/ics/public/{path}`, and the standard `/ics/{path}` URL is auth-exempt. Paths are validated for uniqueness across all sources and source paths.
 
 ### Destinations
 

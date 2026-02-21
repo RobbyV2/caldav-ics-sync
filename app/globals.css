@@ -48,7 +48,7 @@ html {
 .app-accordion-panel.show {
   height: auto !important;
   max-height: 2000px;
-  padding: 16px 20px;
+  padding: 16px 20px 16px 44px;
 }
 
 .accordion-row .app-accordion-header {
@@ -120,6 +120,16 @@ html {
   grid-column: 1 / -1;
 }
 
+.form-field {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.form-field > .app-input-text,
+.form-field > .interval-boxes {
+  margin-top: auto;
+}
+
 .form-field label {
   display: block;
   font-size: 13px;
@@ -171,6 +181,7 @@ html {
 /* Detail rows in accordion panels */
 .detail-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 4px 0;
   font-size: 14px;

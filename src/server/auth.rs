@@ -82,7 +82,35 @@ pub async fn basic_auth_middleware(
         return next.run(req).await;
     }
 
-    if AUTH_EXEMPT_PATHS.iter().any(|p| req.uri().path() == *p) {
+    let path = req.uri().path().to_owned();
+
+    if AUTH_EXEMPT_PATHS.iter().any(|p| path == *p) {
+        return next.run(req).await;
+    }
+
+    if path.starts_with("/ics/public/") {
+        return next.run(req).await;
+    }
+
+    if let Some(true) = path.strip_prefix("/ics/").map(|ics_path| {
+        let Some(state) = req.extensions().get::<crate::api::AppState>() else {
+            return false;
+        };
+        let db = match state.db.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::error!("DB lock poisoned in auth middleware: {}", e);
+                return false;
+            }
+        };
+        match crate::db::is_public_standard_ics(&db, ics_path) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("DB error checking public ICS: {}", e);
+                false
+            }
+        }
+    }) {
         return next.run(req).await;
     }
 
