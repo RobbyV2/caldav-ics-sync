@@ -70,8 +70,8 @@ const emptyDestForm = {
   sync_interval_hours: 1,
   sync_interval_minutes: 0,
   sync_interval_seconds: 0,
-  sync_all: false,
-  keep_local: false,
+  sync_all: true,
+  keep_local: true,
 }
 
 function toSecs(h: number, m: number, s: number): number {
