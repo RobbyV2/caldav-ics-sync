@@ -723,6 +723,51 @@ fn delete_destination_nonexistent() {
     assert!(!delete_destination(&conn, 999).unwrap());
 }
 
+// ---- Overlapping Destinations ----
+
+#[test]
+fn find_overlapping_destinations_returns_other() {
+    let conn = setup();
+    let id1 = create_destination(&conn, &valid_destination()).unwrap();
+    let mut d2 = valid_destination();
+    d2.name = "Dest2".into();
+    d2.ics_url = "https://example.com/other.ics".into();
+    let id2 = create_destination(&conn, &d2).unwrap();
+
+    let overlaps =
+        find_overlapping_destinations(&conn, "https://caldav.example.com", "main", None).unwrap();
+    assert_eq!(overlaps.len(), 2);
+    assert!(overlaps.iter().any(|d| d.id == id1));
+    assert!(overlaps.iter().any(|d| d.id == id2));
+}
+
+#[test]
+fn find_overlapping_destinations_exclude_id() {
+    let conn = setup();
+    let id1 = create_destination(&conn, &valid_destination()).unwrap();
+    let mut d2 = valid_destination();
+    d2.name = "Dest2".into();
+    d2.ics_url = "https://example.com/other.ics".into();
+    let id2 = create_destination(&conn, &d2).unwrap();
+
+    let overlaps =
+        find_overlapping_destinations(&conn, "https://caldav.example.com", "main", Some(id1))
+            .unwrap();
+    assert_eq!(overlaps.len(), 1);
+    assert_eq!(overlaps[0].id, id2);
+}
+
+#[test]
+fn find_overlapping_destinations_no_match() {
+    let conn = setup();
+    create_destination(&conn, &valid_destination()).unwrap();
+
+    let overlaps =
+        find_overlapping_destinations(&conn, "https://caldav.example.com", "other-calendar", None)
+            .unwrap();
+    assert!(overlaps.is_empty());
+}
+
 // ---- ICS Data ----
 
 #[test]

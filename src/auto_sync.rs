@@ -230,7 +230,7 @@ pub fn register_destination(registry: &AutoSyncRegistry, state: &AppState, dest:
                     }
                 }
             };
-            let (uploaded, skipped, total) = crate::api::reverse_sync::run_reverse_sync(
+            let stats = crate::api::reverse_sync::run_reverse_sync(
                 &d.ics_url,
                 &d.caldav_url,
                 &d.calendar_name,
@@ -245,8 +245,8 @@ pub fn register_destination(registry: &AutoSyncRegistry, state: &AppState, dest:
             db::update_destination_sync_status(&db, id, "ok", None)
                 .map_err(RetryError::transient)?;
             Ok(format!(
-                "Auto-sync destination {}: uploaded {}, skipped {}, total {}",
-                id, uploaded, skipped, total
+                "Auto-sync destination {}: uploaded {}, skipped {}, deleted {}, total {}",
+                id, stats.uploaded, stats.skipped, stats.deleted, stats.total
             ))
         },
     );

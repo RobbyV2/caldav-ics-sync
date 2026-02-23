@@ -618,28 +618,30 @@ pub struct UpdateDestination {
     pub keep_local: Option<bool>,
 }
 
+fn map_destination_row(row: &rusqlite::Row) -> rusqlite::Result<Destination> {
+    Ok(Destination {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        ics_url: row.get(2)?,
+        caldav_url: row.get(3)?,
+        calendar_name: row.get(4)?,
+        username: row.get(5)?,
+        password: row.get(6)?,
+        sync_interval_secs: row.get(7)?,
+        sync_all: row.get(8)?,
+        keep_local: row.get(9)?,
+        last_synced: row.get(10)?,
+        last_sync_status: row.get(11)?,
+        last_sync_error: row.get(12)?,
+        created_at: row.get(13)?,
+    })
+}
+
 pub fn list_destinations(conn: &Connection) -> Result<Vec<Destination>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, ics_url, caldav_url, calendar_name, username, password, sync_interval_secs, sync_all, keep_local, last_synced, last_sync_status, last_sync_error, created_at FROM destinations ORDER BY id",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(Destination {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            ics_url: row.get(2)?,
-            caldav_url: row.get(3)?,
-            calendar_name: row.get(4)?,
-            username: row.get(5)?,
-            password: row.get(6)?,
-            sync_interval_secs: row.get(7)?,
-            sync_all: row.get(8)?,
-            keep_local: row.get(9)?,
-            last_synced: row.get(10)?,
-            last_sync_status: row.get(11)?,
-            last_sync_error: row.get(12)?,
-            created_at: row.get(13)?,
-        })
-    })?;
+    let rows = stmt.query_map([], map_destination_row)?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
@@ -647,28 +649,35 @@ pub fn get_destination(conn: &Connection, id: i64) -> Result<Option<Destination>
     let mut stmt = conn.prepare(
         "SELECT id, name, ics_url, caldav_url, calendar_name, username, password, sync_interval_secs, sync_all, keep_local, last_synced, last_sync_status, last_sync_error, created_at FROM destinations WHERE id = ?1",
     )?;
-    let mut rows = stmt.query_map(params![id], |row| {
-        Ok(Destination {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            ics_url: row.get(2)?,
-            caldav_url: row.get(3)?,
-            calendar_name: row.get(4)?,
-            username: row.get(5)?,
-            password: row.get(6)?,
-            sync_interval_secs: row.get(7)?,
-            sync_all: row.get(8)?,
-            keep_local: row.get(9)?,
-            last_synced: row.get(10)?,
-            last_sync_status: row.get(11)?,
-            last_sync_error: row.get(12)?,
-            created_at: row.get(13)?,
-        })
-    })?;
+    let mut rows = stmt.query_map(params![id], map_destination_row)?;
     match rows.next() {
         Some(Ok(d)) => Ok(Some(d)),
         Some(Err(e)) => Err(e.into()),
         None => Ok(None),
+    }
+}
+
+pub fn find_overlapping_destinations(
+    conn: &Connection,
+    caldav_url: &str,
+    calendar_name: &str,
+    exclude_id: Option<i64>,
+) -> Result<Vec<Destination>> {
+    let base_sql = "SELECT id, name, ics_url, caldav_url, calendar_name, username, password, sync_interval_secs, sync_all, keep_local, last_synced, last_sync_status, last_sync_error, created_at FROM destinations WHERE caldav_url = ?1 AND calendar_name = ?2";
+
+    match exclude_id {
+        Some(id) => {
+            let sql = format!("{} AND id != ?3", base_sql);
+            let mut stmt = conn.prepare(&sql)?;
+            let rows =
+                stmt.query_map(params![caldav_url, calendar_name, id], map_destination_row)?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        }
+        None => {
+            let mut stmt = conn.prepare(base_sql)?;
+            let rows = stmt.query_map(params![caldav_url, calendar_name], map_destination_row)?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        }
     }
 }
 
@@ -680,13 +689,6 @@ pub fn create_destination(conn: &Connection, dest: &CreateDestination) -> Result
     require_non_empty("Username", &dest.username)?;
     require_non_empty("Password", &dest.password)?;
     require_non_negative("Sync interval", dest.sync_interval_secs)?;
-
-    let count: i64 = conn.query_row(
-        "SELECT count(*) FROM destinations WHERE caldav_url = ?1 AND calendar_name = ?2",
-        params![dest.caldav_url, dest.calendar_name],
-        |row| row.get(0),
-    )?;
-    ensure!(count == 0, "Duplicate destination calendar is not allowed");
 
     conn.execute(
         "INSERT INTO destinations (name, ics_url, caldav_url, calendar_name, username, password, sync_interval_secs, sync_all, keep_local) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -725,13 +727,6 @@ pub fn update_destination(conn: &Connection, id: i64, upd: &UpdateDestination) -
         .calendar_name
         .as_deref()
         .unwrap_or(&existing.calendar_name);
-
-    let count: i64 = conn.query_row(
-        "SELECT count(*) FROM destinations WHERE caldav_url = ?1 AND calendar_name = ?2 AND id != ?3",
-        params![eff_caldav_url, eff_calendar_name, id],
-        |row| row.get(0),
-    )?;
-    ensure!(count == 0, "Duplicate destination calendar is not allowed");
 
     conn.execute(
         "UPDATE destinations SET name = ?1, ics_url = ?2, caldav_url = ?3, calendar_name = ?4, username = ?5, password = ?6, sync_interval_secs = ?7, sync_all = ?8, keep_local = ?9 WHERE id = ?10",

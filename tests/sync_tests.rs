@@ -403,10 +403,10 @@ async fn start_reverse_sync_mocks(
     });
     let ics_addr = start_mock_server(ics_state).await;
 
-    // CalDAV server (accepts PUT)
+    // CalDAV server (accepts PUT) — needs valid empty REPORT response
     let caldav_state = std::sync::Arc::new(MockState {
         propfind_body: String::new(),
-        report_body: String::new(),
+        report_body: mock_report_response(&[]),
         put_status,
     });
     let caldav_addr = start_mock_server(caldav_state).await;
@@ -417,12 +417,12 @@ async fn start_reverse_sync_mocks(
 #[tokio::test]
 async fn reverse_sync_uploads_events() {
     let events = [
-        ("uid-r1", "Rev1", "20250601T080000Z", "20250601T090000Z"),
-        ("uid-r2", "Rev2", "20250601T100000Z", "20250601T110000Z"),
+        ("uid-r1", "Rev1", "20270601T080000Z", "20270601T090000Z"),
+        ("uid-r2", "Rev2", "20270601T100000Z", "20270601T110000Z"),
     ];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::CREATED).await;
 
-    let (uploaded, _skipped, total) = run_reverse_sync(
+    let stats = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/calendars", caldav_addr),
         "personal",
@@ -434,17 +434,17 @@ async fn reverse_sync_uploads_events() {
     .await
     .unwrap();
 
-    assert_eq!(uploaded, 2);
-    assert_eq!(total, 2);
+    assert_eq!(stats.uploaded, 2);
+    assert_eq!(stats.total, 2);
 }
 
 #[tokio::test]
 async fn reverse_sync_handles_double_calendar_path() {
     // caldav_url already ends with the calendar name
-    let events = [("uid-d1", "Double", "20250701T080000Z", "20250701T090000Z")];
+    let events = [("uid-d1", "Double", "20270701T080000Z", "20270701T090000Z")];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::CREATED).await;
 
-    let (uploaded, _skipped, total) = run_reverse_sync(
+    let stats = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/calendars/personal", caldav_addr),
         "personal",
@@ -456,21 +456,21 @@ async fn reverse_sync_handles_double_calendar_path() {
     .await
     .unwrap();
 
-    assert_eq!(uploaded, 1);
-    assert_eq!(total, 1);
+    assert_eq!(stats.uploaded, 1);
+    assert_eq!(stats.total, 1);
 }
 
 #[tokio::test]
 async fn reverse_sync_reports_correct_uploaded_count() {
     // 204 No Content is also a success status
     let events = [
-        ("uid-c1", "Count1", "20250801T080000Z", "20250801T090000Z"),
-        ("uid-c2", "Count2", "20250801T100000Z", "20250801T110000Z"),
-        ("uid-c3", "Count3", "20250801T120000Z", "20250801T130000Z"),
+        ("uid-c1", "Count1", "20270801T080000Z", "20270801T090000Z"),
+        ("uid-c2", "Count2", "20270801T100000Z", "20270801T110000Z"),
+        ("uid-c3", "Count3", "20270801T120000Z", "20270801T130000Z"),
     ];
     let (ics_addr, caldav_addr) = start_reverse_sync_mocks(&events, StatusCode::NO_CONTENT).await;
 
-    let (uploaded, _skipped, total) = run_reverse_sync(
+    let stats = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/", caldav_addr),
         "work",
@@ -482,13 +482,13 @@ async fn reverse_sync_reports_correct_uploaded_count() {
     .await
     .unwrap();
 
-    assert_eq!(uploaded, 3);
-    assert_eq!(total, 3);
+    assert_eq!(stats.uploaded, 3);
+    assert_eq!(stats.total, 3);
 }
 
 #[tokio::test]
 async fn reverse_sync_returns_error_when_uploads_fail() {
-    let events = [("uid-fail", "Fail", "20250901T080000Z", "20250901T090000Z")];
+    let events = [("uid-fail", "Fail", "20270901T080000Z", "20270901T090000Z")];
     let (ics_addr, caldav_addr) =
         start_reverse_sync_mocks(&events, StatusCode::INTERNAL_SERVER_ERROR).await;
 
@@ -517,14 +517,14 @@ async fn reverse_sync_skips_unchanged_events() {
         (
             "uid-same",
             "Same Event",
-            "20250601T080000Z",
-            "20250601T090000Z",
+            "20270601T080000Z",
+            "20270601T090000Z",
         ),
         (
             "uid-new",
             "New Event",
-            "20250601T100000Z",
-            "20250601T110000Z",
+            "20270601T100000Z",
+            "20270601T110000Z",
         ),
     ];
     let ics_feed = mock_ics_feed(&events);
@@ -541,8 +541,8 @@ async fn reverse_sync_skips_unchanged_events() {
     let existing = [(
         "uid-same",
         "Same Event",
-        "20250601T080000Z",
-        "20250601T090000Z",
+        "20270601T080000Z",
+        "20270601T090000Z",
     )];
     let caldav_state = std::sync::Arc::new(MockState {
         propfind_body: String::new(),
@@ -551,7 +551,7 @@ async fn reverse_sync_skips_unchanged_events() {
     });
     let caldav_addr = start_mock_server(caldav_state).await;
 
-    let (uploaded, skipped, total) = run_reverse_sync(
+    let stats = run_reverse_sync(
         &format!("http://{}/feed.ics", ics_addr),
         &format!("http://{}/dav/", caldav_addr),
         "cal",
@@ -563,7 +563,7 @@ async fn reverse_sync_skips_unchanged_events() {
     .await
     .unwrap();
 
-    assert_eq!(total, 2);
-    assert_eq!(skipped, 1, "uid-same should be skipped");
-    assert_eq!(uploaded, 1, "only uid-new should be uploaded");
+    assert_eq!(stats.total, 2);
+    assert_eq!(stats.skipped, 1, "uid-same should be skipped");
+    assert_eq!(stats.uploaded, 1, "only uid-new should be uploaded");
 }

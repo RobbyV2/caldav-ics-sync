@@ -1,5 +1,7 @@
 use crate::api::AppState;
-use crate::api::destinations::{DestinationListResponse, DestinationResponse, ReverseSyncResult};
+use crate::api::destinations::{
+    DestinationListResponse, DestinationResponse, OverlapEntry, OverlapResponse, ReverseSyncResult,
+};
 use crate::api::health::{DetailedHealthResponse, HealthResponse};
 use crate::api::source_paths::{SourcePathListResponse, SourcePathResponse};
 use crate::api::sources::{SourceListResponse, SourceResponse, SyncResult};
@@ -28,6 +30,7 @@ use utoipa::OpenApi;
         crate::api::destinations::update_destination,
         crate::api::destinations::delete_destination,
         crate::api::destinations::sync_destination,
+        crate::api::destinations::check_overlap,
         crate::api::health::health,
         crate::api::health::health_detailed,
     ),
@@ -49,6 +52,8 @@ use utoipa::OpenApi;
         DestinationResponse,
         DestinationListResponse,
         ReverseSyncResult,
+        OverlapEntry,
+        OverlapResponse,
         HealthResponse,
         DetailedHealthResponse,
     )),

@@ -395,6 +395,75 @@ function DeleteDialog({ prompt, onCancel, onConfirm }: DeleteDialogProps) {
   )
 }
 
+interface OverlapEntry {
+  id: number
+  name: string
+  ics_url: string
+  sync_all: boolean
+  keep_local: boolean
+}
+
+interface OverlapWarning {
+  overlapping: OverlapEntry[]
+  pendingSubmit: () => Promise<void>
+}
+
+function OverlapWarningDialog({
+  warning,
+  onCancel,
+  onConfirm,
+}: {
+  warning: OverlapWarning | null
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  if (!warning) return null
+  return (
+    <div className="app-dialog show" onClick={onCancel}>
+      <div className="app-dialog-modal" onClick={e => e.stopPropagation()}>
+        <div className="app-dialog-header">
+          <h3>Duplicate Calendar Target</h3>
+        </div>
+        <div className="app-dialog-body">
+          <p>Another destination already syncs to this CalDAV calendar:</p>
+          {warning.overlapping.map(d => (
+            <div
+              key={d.id}
+              style={{
+                marginBottom: 8,
+                padding: '8px 12px',
+                background: 'rgba(255,255,255,0.05)',
+                borderRadius: 4,
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              <strong>{d.name}</strong>
+              <br />
+              <span style={{ fontSize: 13, opacity: 0.7 }}>{d.ics_url}</span>
+              <br />
+              <span style={{ fontSize: 12, opacity: 0.6 }}>
+                sync_all: {d.sync_all ? 'on' : 'off'}, keep_local: {d.keep_local ? 'on' : 'off'}
+              </span>
+            </div>
+          ))}
+          <p style={{ marginTop: 12, fontSize: 13 }}>
+            Multiple destinations targeting the same calendar operate independently. If keep_local
+            is disabled on any destination, it may delete events uploaded by another.
+          </p>
+          <div className="dialog-actions">
+            <button className="app-btn app-btn-subtle" onClick={onCancel}>
+              Cancel
+            </button>
+            <button className="app-btn app-btn-primary" onClick={onConfirm}>
+              Continue Anyway
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // --- Component ---
 
 export default function Home() {
@@ -430,6 +499,9 @@ export default function Home() {
 
   // Delete confirmation
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null)
+
+  // Overlap warning
+  const [overlapWarning, setOverlapWarning] = useState<OverlapWarning | null>(null)
 
   // ── Data fetching ──────────────────────────────────────────────
 
@@ -606,17 +678,43 @@ export default function Home() {
 
   async function submitDest(e: React.FormEvent) {
     e.preventDefault()
-    const url = editingDest ? `/api/destinations/${editingDest.id}` : '/api/destinations'
-    const method = editingDest ? 'PUT' : 'POST'
     const { sync_interval_hours, sync_interval_minutes, sync_interval_seconds, ...rest } = destForm
     const body = {
       ...rest,
       sync_interval_secs: toSecs(sync_interval_hours, sync_interval_minutes, sync_interval_seconds),
     }
-    await apiSubmit(url, method, body, () => {
-      closeDestDialog()
-      fetchDestinations()
-    })
+
+    const doSubmit = async () => {
+      const url = editingDest ? `/api/destinations/${editingDest.id}` : '/api/destinations'
+      const method = editingDest ? 'PUT' : 'POST'
+      try {
+        await apiSubmit(url, method, body, () => {
+          closeDestDialog()
+          fetchDestinations()
+        })
+      } finally {
+        setOverlapWarning(null)
+      }
+    }
+
+    try {
+      const params = new URLSearchParams({
+        caldav_url: destForm.caldav_url,
+        calendar_name: destForm.calendar_name,
+      })
+      if (editingDest) params.set('exclude_id', String(editingDest.id))
+      const res = await api.get(`/api/destinations/check-overlap?${params}`)
+      const data = res.data as { overlapping: OverlapEntry[] }
+      if (data.overlapping?.length) {
+        setDestDialogOpen(false)
+        setOverlapWarning({ overlapping: data.overlapping, pendingSubmit: doSubmit })
+        return
+      }
+    } catch {
+      // If overlap check fails, proceed without warning
+    }
+
+    await doSubmit()
   }
 
   // ── Delete handler ─────────────────────────────────────────────
@@ -1087,6 +1185,14 @@ export default function Home() {
         prompt={deletePrompt}
         onCancel={() => setDeletePrompt(null)}
         onConfirm={handleDeleteConfirm}
+      />
+      <OverlapWarningDialog
+        warning={overlapWarning}
+        onCancel={() => {
+          setOverlapWarning(null)
+          setDestDialogOpen(true)
+        }}
+        onConfirm={() => overlapWarning?.pendingSubmit()}
       />
     </div>
   )

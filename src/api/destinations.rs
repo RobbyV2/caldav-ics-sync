@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, post, put},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::AppState;
@@ -31,6 +31,7 @@ pub struct ReverseSyncResult {
     message: String,
     uploaded: usize,
     skipped: usize,
+    deleted: usize,
     total: usize,
 }
 
@@ -38,6 +39,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/destinations", get(list_destinations))
         .route("/destinations", post(create_destination))
+        .route("/destinations/check-overlap", get(check_overlap))
         .route("/destinations/{id}", put(update_destination))
         .route("/destinations/{id}", delete(delete_destination))
         .route("/destinations/{id}/sync", post(sync_destination))
@@ -224,6 +226,7 @@ pub async fn sync_destination(
                         message: "Destination not found".into(),
                         uploaded: 0,
                         skipped: 0,
+                        deleted: 0,
                         total: 0,
                     }),
                 )
@@ -237,6 +240,7 @@ pub async fn sync_destination(
                         message: e.to_string(),
                         uploaded: 0,
                         skipped: 0,
+                        deleted: 0,
                         total: 0,
                     }),
                 )
@@ -256,7 +260,7 @@ pub async fn sync_destination(
     )
     .await
     {
-        Ok((uploaded, skipped, total)) => {
+        Ok(stats) => {
             let db = state.db.lock().unwrap();
             let _ = db::update_destination_sync_status(&db, id, "ok", None);
             (
@@ -264,12 +268,13 @@ pub async fn sync_destination(
                 Json(ReverseSyncResult {
                     status: "success".into(),
                     message: format!(
-                        "Uploaded {} of {} events ({} unchanged, skipped)",
-                        uploaded, total, skipped
+                        "Uploaded {} of {} events ({} unchanged, {} deleted)",
+                        stats.uploaded, stats.total, stats.skipped, stats.deleted
                     ),
-                    uploaded,
-                    skipped,
-                    total,
+                    uploaded: stats.uploaded,
+                    skipped: stats.skipped,
+                    deleted: stats.deleted,
+                    total: stats.total,
                 }),
             )
                 .into_response()
@@ -285,7 +290,74 @@ pub async fn sync_destination(
                     message: e.to_string(),
                     uploaded: 0,
                     skipped: 0,
+                    deleted: 0,
                     total: 0,
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct OverlapQuery {
+    caldav_url: String,
+    calendar_name: String,
+    exclude_id: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct OverlapEntry {
+    id: i64,
+    name: String,
+    ics_url: String,
+    sync_all: bool,
+    keep_local: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct OverlapResponse {
+    overlapping: Vec<OverlapEntry>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/destinations/check-overlap",
+    params(
+        ("caldav_url" = String, Query, description = "CalDAV URL to check"),
+        ("calendar_name" = String, Query, description = "Calendar name to check"),
+        ("exclude_id" = Option<i64>, Query, description = "Destination ID to exclude"),
+    ),
+    responses((status = 200, body = OverlapResponse))
+)]
+pub async fn check_overlap(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<OverlapQuery>,
+) -> impl IntoResponse {
+    let db = state.db.lock().unwrap();
+    match db::find_overlapping_destinations(&db, &q.caldav_url, &q.calendar_name, q.exclude_id) {
+        Ok(dests) => (
+            StatusCode::OK,
+            Json(OverlapResponse {
+                overlapping: dests
+                    .into_iter()
+                    .map(|d| OverlapEntry {
+                        id: d.id,
+                        name: d.name,
+                        ics_url: d.ics_url,
+                        sync_all: d.sync_all,
+                        keep_local: d.keep_local,
+                    })
+                    .collect(),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to check destination overlap: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(OverlapResponse {
+                    overlapping: vec![],
                 }),
             )
                 .into_response()
