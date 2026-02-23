@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub port: u16,
     pub server_proxy_url: Option<String>,
     pub data_dir: String,
+    pub db_path: Option<String>,
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
     pub auth_password_hash: Option<String>,
@@ -29,6 +30,13 @@ impl AppConfig {
         }
 
         Ok(cfg)
+    }
+
+    pub fn db_path(&self) -> String {
+        match &self.db_path {
+            Some(path) => path.clone(),
+            None => format!("{}/caldav-sync.db", self.data_dir),
+        }
     }
 
     pub fn proxy_url(&self) -> String {

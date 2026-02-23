@@ -74,16 +74,17 @@ services:
 
 All sync configuration (sources, destinations, credentials) is managed through the web UI. The only environment variables are for server tuning:
 
-| Variable             | Default                 | Description                                            |
-| -------------------- | ----------------------- | ------------------------------------------------------ |
-| `SERVER_HOST`        | `0.0.0.0`               | Bind address                                           |
-| `SERVER_PORT`        | `6765`                  | Rust server port (user-facing)                         |
-| `PORT`               | `6766`                  | Next.js internal port                                  |
-| `SERVER_PROXY_URL`   | `http://localhost:6766` | Internal proxy target                                  |
-| `DATA_DIR`           | `./data`                | Directory for SQLite database                          |
-| `AUTH_USERNAME`      | _(unset)_               | Basic Auth username (required to enable auth)          |
-| `AUTH_PASSWORD`      | _(unset)_               | Plain text password (mutually exclusive with hash)     |
-| `AUTH_PASSWORD_HASH` | _(unset)_               | Argon2 PHC-format hash (mutually exclusive with above) |
+| Variable             | Default                   | Description                                            |
+| -------------------- | ------------------------- | ------------------------------------------------------ |
+| `SERVER_HOST`        | `0.0.0.0`                 | Bind address                                           |
+| `SERVER_PORT`        | `6765`                    | Rust server port (user-facing)                         |
+| `PORT`               | `6766`                    | Next.js internal port                                  |
+| `SERVER_PROXY_URL`   | `http://localhost:6766`   | Internal proxy target                                  |
+| `DATA_DIR`           | `./data`                  | Directory for SQLite database                          |
+| `DB_PATH`            | `DATA_DIR/caldav-sync.db` | Full path to SQLite database file                      |
+| `AUTH_USERNAME`      | _(unset)_                 | Basic Auth username (required to enable auth)          |
+| `AUTH_PASSWORD`      | _(unset)_                 | Plain text password (mutually exclusive with hash)     |
+| `AUTH_PASSWORD_HASH` | _(unset)_                 | Argon2 PHC-format hash (mutually exclusive with above) |
 
 ## Concepts
 
@@ -177,4 +178,4 @@ Navigate to `http://127.0.0.1:6765`.
 
 ## Data Storage
 
-All configuration and synced ICS data is stored in a single SQLite database at `DATA_DIR/caldav-sync.db`. Mount `/data` as a Docker volume for persistence.
+All configuration and synced ICS data is stored in a single SQLite database. By default this is at `DATA_DIR/caldav-sync.db`, but can be overridden with the `DB_PATH` environment variable. Mount `/data` as a Docker volume for persistence.

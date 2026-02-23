@@ -21,8 +21,10 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = AppConfig::load()?;
 
-    std::fs::create_dir_all(&cfg.data_dir)?;
-    let db_path = format!("{}/caldav-sync.db", cfg.data_dir);
+    let db_path = cfg.db_path();
+    if let Some(parent) = std::path::Path::new(&db_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let conn = rusqlite::Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     caldav_ics_sync::db::init_db(&conn)?;
