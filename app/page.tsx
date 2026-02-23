@@ -417,6 +417,13 @@ function OverlapWarningDialog({
   onCancel: () => void
   onConfirm: () => void
 }) {
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleConfirm = () => {
+    setSubmitting(true)
+    onConfirm()
+  }
+
   if (!warning) return null
   return (
     <div className="app-dialog show" onClick={onCancel}>
@@ -454,8 +461,12 @@ function OverlapWarningDialog({
             <button className="app-btn app-btn-subtle" onClick={onCancel}>
               Cancel
             </button>
-            <button className="app-btn app-btn-primary" onClick={onConfirm}>
-              Continue Anyway
+            <button
+              className="app-btn app-btn-primary"
+              onClick={handleConfirm}
+              disabled={submitting}
+            >
+              {submitting ? 'Submitting...' : 'Continue Anyway'}
             </button>
           </div>
         </div>
@@ -697,21 +708,18 @@ export default function Home() {
       }
     }
 
-    try {
-      const params = new URLSearchParams({
-        caldav_url: destForm.caldav_url,
-        calendar_name: destForm.calendar_name,
-      })
-      if (editingDest) params.set('exclude_id', String(editingDest.id))
-      const res = await api.get(`/api/destinations/check-overlap?${params}`)
-      const data = res.data as { overlapping: OverlapEntry[] }
-      if (data.overlapping?.length) {
-        setDestDialogOpen(false)
-        setOverlapWarning({ overlapping: data.overlapping, pendingSubmit: doSubmit })
-        return
-      }
-    } catch {
-      // If overlap check fails, proceed without warning
+    const params = new URLSearchParams({
+      caldav_url: destForm.caldav_url,
+      calendar_name: destForm.calendar_name,
+      ...(editingDest?.id ? { exclude_id: String(editingDest.id) } : {}),
+    })
+    const res = await api.get<{ overlapping: OverlapEntry[] }>(
+      `/api/destinations/check-overlap?${params}`
+    )
+    if (res.data?.overlapping?.length) {
+      setDestDialogOpen(false)
+      setOverlapWarning({ overlapping: res.data.overlapping, pendingSubmit: doSubmit })
+      return
     }
 
     await doSubmit()
@@ -1192,7 +1200,7 @@ export default function Home() {
           setOverlapWarning(null)
           setDestDialogOpen(true)
         }}
-        onConfirm={() => overlapWarning?.pendingSubmit()}
+        onConfirm={() => void overlapWarning?.pendingSubmit()}
       />
     </div>
   )

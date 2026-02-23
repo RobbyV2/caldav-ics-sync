@@ -51,8 +51,15 @@ fn normalize_vevent(vevent_data: &str) -> Vec<String> {
     lines
 }
 
-fn events_equal(existing: &str, incoming: &str) -> bool {
-    normalize_vevent(existing) == normalize_vevent(incoming)
+fn events_equal(existing: &[String], incoming: &[String]) -> bool {
+    if existing.len() != incoming.len() {
+        return false;
+    }
+    let mut a: Vec<Vec<String>> = existing.iter().map(|v| normalize_vevent(v)).collect();
+    let mut b: Vec<Vec<String>> = incoming.iter().map(|v| normalize_vevent(v)).collect();
+    a.sort();
+    b.sort();
+    a == b
 }
 
 #[derive(Debug)]
@@ -61,15 +68,31 @@ enum EventEnd {
     DateTime(NaiveDateTime),
 }
 
-fn parse_ics_value(value: &str) -> Option<EventEnd> {
-    let value = value.trim().trim_end_matches('Z');
-    match value.len() {
-        8 => chrono::NaiveDate::parse_from_str(value, "%Y%m%d")
+fn parse_ics_value(value: &str, tzid: Option<&str>) -> Option<EventEnd> {
+    let trimmed = value.trim();
+    let is_utc = trimmed.ends_with('Z');
+    let stripped = trimmed.trim_end_matches('Z');
+    match stripped.len() {
+        8 => chrono::NaiveDate::parse_from_str(stripped, "%Y%m%d")
             .ok()
             .map(EventEnd::Date),
-        15 => NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S")
-            .ok()
-            .map(EventEnd::DateTime),
+        15 => {
+            let naive = NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?;
+            if is_utc || tzid.is_none() {
+                Some(EventEnd::DateTime(naive))
+            } else {
+                match tzid?.parse::<chrono_tz::Tz>() {
+                    Ok(tz) => {
+                        use chrono::TimeZone;
+                        match tz.from_local_datetime(&naive).earliest() {
+                            Some(dt) => Some(EventEnd::DateTime(dt.naive_utc())),
+                            None => Some(EventEnd::DateTime(naive)),
+                        }
+                    }
+                    Err(_) => Some(EventEnd::DateTime(naive)),
+                }
+            }
+        }
         _ => None,
     }
 }
@@ -83,11 +106,16 @@ fn event_end_parsed(vevent_text: &str) -> Option<EventEnd> {
         let Some(colon_pos) = trimmed.find(':') else {
             continue;
         };
-        let prop_name = trimmed[..colon_pos].split(';').next().unwrap_or("");
+        let params = &trimmed[..colon_pos];
+        let prop_name = params.split(';').next().unwrap_or("");
+        let tzid = params
+            .split(';')
+            .skip(1)
+            .find_map(|p| p.strip_prefix("TZID="));
         let value = &trimmed[colon_pos + 1..];
         match prop_name {
-            "DTEND" => dtend = parse_ics_value(value),
-            "DTSTART" => dtstart = parse_ics_value(value),
+            "DTEND" => dtend = parse_ics_value(value, tzid),
+            "DTSTART" => dtstart = parse_ics_value(value, tzid),
             _ => {}
         }
     }
@@ -102,48 +130,73 @@ fn is_event_in_future(vevent_text: &str) -> bool {
     }
 }
 
-fn extract_events(ics_text: &str) -> Vec<(String, String)> {
+struct ExtractedEvents {
+    events: HashMap<String, Vec<String>>,
+    vtimezones: Vec<String>,
+}
+
+fn extract_events(ics_text: &str) -> ExtractedEvents {
     let unfolded = unfold_ics(ics_text);
-    let mut events = Vec::new();
+    let mut events: HashMap<String, Vec<String>> = HashMap::new();
+    let mut vtimezones: Vec<String> = Vec::new();
     let mut in_vevent = false;
+    let mut in_vtimezone = false;
     let mut current_event = String::new();
     let mut current_uid = String::new();
+    let mut current_tz = String::new();
 
     for line in unfolded.lines() {
-        if line.starts_with("BEGIN:VEVENT") {
-            in_vevent = true;
-            current_event.clear();
-            current_uid.clear();
+        if line.starts_with("BEGIN:VTIMEZONE") {
+            in_vtimezone = true;
+            current_tz.clear();
         }
-        if in_vevent {
-            current_event.push_str(line);
-            current_event.push_str("\r\n");
-            if line.starts_with("UID:") {
-                current_uid = line.trim_start_matches("UID:").trim().to_string();
+
+        if in_vtimezone {
+            current_tz.push_str(line);
+            current_tz.push_str("\r\n");
+            if line.starts_with("END:VTIMEZONE") {
+                in_vtimezone = false;
+                vtimezones.push(current_tz.clone());
             }
-        }
-        if line.starts_with("END:VEVENT") {
-            in_vevent = false;
-            if !current_uid.is_empty() {
-                events.push((current_uid.clone(), current_event.clone()));
+        } else {
+            if line.starts_with("BEGIN:VEVENT") {
+                in_vevent = true;
+                current_event.clear();
+                current_uid.clear();
+            }
+            if in_vevent {
+                current_event.push_str(line);
+                current_event.push_str("\r\n");
+                if line.starts_with("UID:") {
+                    current_uid = line.trim_start_matches("UID:").trim().to_string();
+                }
+                if line.starts_with("END:VEVENT") {
+                    in_vevent = false;
+                    if !current_uid.is_empty() {
+                        events
+                            .entry(current_uid.clone())
+                            .or_default()
+                            .push(current_event.clone());
+                    }
+                }
             }
         }
     }
-    events
+    ExtractedEvents { events, vtimezones }
 }
 
 async fn fetch_existing_events(
     client: &Client,
     calendar_base: &str,
-) -> Result<HashMap<String, String>> {
+) -> Result<HashMap<String, Vec<String>>> {
     let existing_data = sync::fetch_events(client, calendar_base, calendar_base)
         .await
         .context("Failed to fetch existing CalDAV events")?;
 
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for ics_str in &existing_data {
-        for (uid, vevent) in extract_events(ics_str) {
-            map.insert(uid, vevent);
+        for (uid, vevents) in extract_events(ics_str).events {
+            map.entry(uid).or_default().extend(vevents);
         }
     }
     Ok(map)
@@ -169,9 +222,9 @@ pub async fn run_reverse_sync(
         .await
         .context("Failed to read ICS body")?;
 
-    let raw_events = extract_events(&ics_text);
+    let extracted = extract_events(&ics_text);
 
-    if raw_events.is_empty() {
+    if extracted.events.is_empty() {
         tracing::warn!("ICS feed at {} returned 0 events, skipping sync", ics_url);
         return Ok(ReverseSyncStats {
             uploaded: 0,
@@ -181,14 +234,15 @@ pub async fn run_reverse_sync(
         });
     }
 
-    let all_events: HashMap<String, String> = raw_events.into_iter().collect();
-    let all_remote_uids: HashSet<String> = all_events.keys().cloned().collect();
-    let events: Vec<(String, String)> = if sync_all {
-        all_events.into_iter().collect()
+    let tz_block = extracted.vtimezones.join("");
+    let all_remote_uids: HashSet<String> = extracted.events.keys().cloned().collect();
+    let events: HashMap<String, Vec<String>> = if sync_all {
+        extracted.events
     } else {
-        all_events
+        extracted
+            .events
             .into_iter()
-            .filter(|(_, vevent)| is_event_in_future(vevent))
+            .filter(|(_, vevents)| vevents.iter().any(|v| is_event_in_future(v)))
             .collect()
     };
 
@@ -222,17 +276,18 @@ pub async fn run_reverse_sync(
     let mut skipped = 0;
     let mut errors = 0;
 
-    for (uid, vevent_data) in &events {
-        if let Some(existing_vevent) = existing.get(uid)
-            && events_equal(existing_vevent, vevent_data)
+    for (uid, vevent_blocks) in &events {
+        if let Some(existing_vevents) = existing.get(uid)
+            && events_equal(existing_vevents, vevent_blocks)
         {
             skipped += 1;
             continue;
         }
 
+        let vevent_block = vevent_blocks.join("");
         let wrapped = format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalDAV/ICS Sync//EN\r\n{}\r\nEND:VCALENDAR\r\n",
-            vevent_data
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//CalDAV/ICS Sync//EN\r\n{}{}END:VCALENDAR\r\n",
+            tz_block, vevent_block
         );
 
         let event_url = format!("{}{}.ics", calendar_base, uid);
@@ -270,7 +325,7 @@ pub async fn run_reverse_sync(
         } else {
             existing
                 .iter()
-                .filter(|(_, vevent)| is_event_in_future(vevent))
+                .filter(|(_, vevents)| vevents.iter().any(|v| is_event_in_future(v)))
                 .map(|(uid, _)| uid.clone())
                 .collect()
         };
@@ -307,7 +362,6 @@ mod tests {
 
     #[test]
     fn unfold_joins_continuation_lines() {
-        // Two spaces: first is the RFC 5545 fold marker (stripped), second is content
         let folded = "SUMMARY:Long event\r\n  name here";
         assert!(unfold_ics(folded).contains("SUMMARY:Long event name here"));
     }
@@ -323,24 +377,68 @@ mod tests {
 
     #[test]
     fn events_equal_ignores_dtstamp_difference() {
-        let a = "BEGIN:VEVENT\r\nUID:1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Test\r\nEND:VEVENT";
-        let b = "BEGIN:VEVENT\r\nUID:1\r\nDTSTAMP:20260221T120000Z\r\nSUMMARY:Test\r\nEND:VEVENT";
-        assert!(events_equal(a, b));
+        let a = vec![
+            "BEGIN:VEVENT\r\nUID:1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Test\r\nEND:VEVENT"
+                .to_string(),
+        ];
+        let b = vec![
+            "BEGIN:VEVENT\r\nUID:1\r\nDTSTAMP:20260221T120000Z\r\nSUMMARY:Test\r\nEND:VEVENT"
+                .to_string(),
+        ];
+        assert!(events_equal(&a, &b));
     }
 
     #[test]
     fn events_not_equal_when_summary_differs() {
-        let a = "BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Meeting A\r\nEND:VEVENT";
-        let b = "BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Meeting B\r\nEND:VEVENT";
-        assert!(!events_equal(a, b));
+        let a = vec!["BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Meeting A\r\nEND:VEVENT".to_string()];
+        let b = vec!["BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Meeting B\r\nEND:VEVENT".to_string()];
+        assert!(!events_equal(&a, &b));
+    }
+
+    #[test]
+    fn events_equal_different_vevent_count() {
+        let a = vec!["BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Test\r\nEND:VEVENT".to_string()];
+        let b = vec![
+            "BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:Test\r\nEND:VEVENT".to_string(),
+            "BEGIN:VEVENT\r\nUID:1\r\nRECURRENCE-ID:20260308T100000Z\r\nSUMMARY:Override\r\nEND:VEVENT".to_string(),
+        ];
+        assert!(!events_equal(&a, &b));
     }
 
     #[test]
     fn extract_events_parses_uids() {
         let ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc@test\r\nSUMMARY:Test\r\nEND:VEVENT\r\nEND:VCALENDAR";
-        let events = extract_events(ics);
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].0, "abc@test");
+        let extracted = extract_events(ics);
+        assert_eq!(extracted.events.len(), 1);
+        assert!(extracted.events.contains_key("abc@test"));
+        assert_eq!(extracted.events["abc@test"].len(), 1);
+    }
+
+    #[test]
+    fn extract_events_groups_recurring_by_uid() {
+        let ics = "BEGIN:VCALENDAR\r\n\
+            BEGIN:VEVENT\r\n\
+            UID:recurring@test\r\n\
+            SUMMARY:Weekly Meeting\r\n\
+            DTSTART:20260301T100000Z\r\n\
+            DTEND:20260301T110000Z\r\n\
+            RRULE:FREQ=WEEKLY\r\n\
+            END:VEVENT\r\n\
+            BEGIN:VEVENT\r\n\
+            UID:recurring@test\r\n\
+            RECURRENCE-ID:20260308T100000Z\r\n\
+            SUMMARY:Weekly Meeting (moved)\r\n\
+            DTSTART:20260308T140000Z\r\n\
+            DTEND:20260308T150000Z\r\n\
+            END:VEVENT\r\n\
+            END:VCALENDAR";
+        let extracted = extract_events(ics);
+        assert_eq!(extracted.events.len(), 1, "both VEVENTs share the same UID");
+        assert_eq!(
+            extracted.events["recurring@test"].len(),
+            2,
+            "master + override = 2 VEVENT blocks"
+        );
     }
 
     #[test]
@@ -353,7 +451,7 @@ mod tests {
 
     #[test]
     fn parse_ics_value_date_only() {
-        match parse_ics_value("20260301") {
+        match parse_ics_value("20260301", None) {
             Some(EventEnd::Date(d)) => {
                 assert_eq!(d, chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap())
             }
@@ -363,7 +461,7 @@ mod tests {
 
     #[test]
     fn parse_ics_value_with_time() {
-        match parse_ics_value("20260301T100000") {
+        match parse_ics_value("20260301T100000", None) {
             Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 10),
             other => panic!("Expected EventEnd::DateTime, got {:?}", other),
         }
@@ -371,9 +469,29 @@ mod tests {
 
     #[test]
     fn parse_ics_value_utc_suffix() {
-        match parse_ics_value("20260301T100000Z") {
+        match parse_ics_value("20260301T100000Z", None) {
             Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 10),
             other => panic!("Expected EventEnd::DateTime, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_ics_value_with_tzid() {
+        // March 1 in America/New_York is EST (UTC-5), so 10:00 local = 15:00 UTC
+        match parse_ics_value("20260301T100000", Some("America/New_York")) {
+            Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 15),
+            other => panic!(
+                "Expected EventEnd::DateTime with UTC hour 15, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_ics_value_with_unrecognized_tzid() {
+        match parse_ics_value("20260301T100000", Some("Fake/Timezone")) {
+            Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 10),
+            other => panic!("Expected EventEnd::DateTime with hour 10, got {:?}", other),
         }
     }
 
@@ -398,9 +516,10 @@ mod tests {
 
     #[test]
     fn event_end_parsed_handles_tzid() {
+        // March 1 in America/New_York is EST (UTC-5), so 10:00 local = 15:00 UTC
         let vevent = "BEGIN:VEVENT\r\nDTEND;TZID=America/New_York:20260301T100000\r\nEND:VEVENT";
         match event_end_parsed(vevent) {
-            Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 10),
+            Some(EventEnd::DateTime(dt)) => assert_eq!(dt.hour(), 15),
             other => panic!("Expected EventEnd::DateTime, got {:?}", other),
         }
     }
@@ -421,5 +540,46 @@ mod tests {
     fn is_event_in_future_unparseable_defaults_true() {
         let vevent = "BEGIN:VEVENT\r\nSUMMARY:No dates\r\nEND:VEVENT";
         assert!(is_event_in_future(vevent));
+    }
+
+    #[test]
+    fn parse_ics_value_dst_gap_falls_back_to_naive() {
+        // 2:30 AM on March 8, 2026 falls in the DST gap for America/New_York
+        // (clocks spring forward from 2:00 to 3:00)
+        match parse_ics_value("20260308T023000", Some("America/New_York")) {
+            Some(EventEnd::DateTime(dt)) => {
+                assert_eq!(dt.hour(), 2);
+                assert_eq!(dt.minute(), 30);
+            }
+            other => panic!("Expected EventEnd::DateTime fallback, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn extract_events_captures_vtimezone_blocks() {
+        let ics = "BEGIN:VCALENDAR\r\n\
+            VERSION:2.0\r\n\
+            BEGIN:VTIMEZONE\r\n\
+            TZID:America/New_York\r\n\
+            BEGIN:STANDARD\r\n\
+            DTSTART:19701101T020000\r\n\
+            RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\n\
+            TZOFFSETFROM:-0400\r\n\
+            TZOFFSETTO:-0500\r\n\
+            END:STANDARD\r\n\
+            END:VTIMEZONE\r\n\
+            BEGIN:VEVENT\r\n\
+            UID:tz-test@example\r\n\
+            DTSTART;TZID=America/New_York:20260301T100000\r\n\
+            SUMMARY:TZ Test\r\n\
+            END:VEVENT\r\n\
+            END:VCALENDAR";
+        let extracted = extract_events(ics);
+        assert_eq!(extracted.events.len(), 1);
+        assert!(extracted.events.contains_key("tz-test@example"));
+        assert_eq!(extracted.vtimezones.len(), 1);
+        assert!(extracted.vtimezones[0].contains("TZID:America/New_York"));
+        assert!(extracted.vtimezones[0].starts_with("BEGIN:VTIMEZONE"));
+        assert!(extracted.vtimezones[0].contains("END:VTIMEZONE"));
     }
 }

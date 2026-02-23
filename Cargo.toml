@@ -32,6 +32,7 @@ subtle = "2"
 tokio-retry2 = "0.5"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 argon2 = "0.5"
 rand = "0.10"

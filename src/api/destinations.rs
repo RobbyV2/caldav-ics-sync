@@ -268,7 +268,7 @@ pub async fn sync_destination(
                 Json(ReverseSyncResult {
                     status: "success".into(),
                     message: format!(
-                        "Uploaded {} of {} events ({} unchanged, {} deleted)",
+                        "Uploaded {} of {} events ({} unchanged); deleted {} orphans",
                         stats.uploaded, stats.total, stats.skipped, stats.deleted
                     ),
                     uploaded: stats.uploaded,

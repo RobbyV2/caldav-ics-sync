@@ -49,15 +49,7 @@ fn mock_report_response(events: &[(&str, &str, &str, &str)]) -> String {
     let mut responses = String::new();
     for (uid, summary, dtstart, dtend) in events {
         let ics = format!(
-            "BEGIN:VCALENDAR\r\n\
-             VERSION:2.0\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:{uid}\r\n\
-             SUMMARY:{summary}\r\n\
-             DTSTART:{dtstart}\r\n\
-             DTEND:{dtend}\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR"
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{summary}\r\nDTSTART:{dtstart}\r\nDTEND:{dtend}\r\nEND:VEVENT\r\nEND:VCALENDAR"
         );
         responses.push_str(&format!(
             r#"<d:response>
@@ -85,12 +77,7 @@ fn mock_ics_feed(events: &[(&str, &str, &str, &str)]) -> String {
     let mut body = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     for (uid, summary, dtstart, dtend) in events {
         body.push_str(&format!(
-            "BEGIN:VEVENT\r\n\
-             UID:{uid}\r\n\
-             SUMMARY:{summary}\r\n\
-             DTSTART:{dtstart}\r\n\
-             DTEND:{dtend}\r\n\
-             END:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:{summary}\r\nDTSTART:{dtstart}\r\nDTEND:{dtend}\r\nEND:VEVENT\r\n"
         ));
     }
     body.push_str("END:VCALENDAR\r\n");
@@ -566,4 +553,5 @@ async fn reverse_sync_skips_unchanged_events() {
     assert_eq!(stats.total, 2);
     assert_eq!(stats.skipped, 1, "uid-same should be skipped");
     assert_eq!(stats.uploaded, 1, "only uid-new should be uploaded");
+    assert_eq!(stats.deleted, 0);
 }
