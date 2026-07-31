@@ -67,7 +67,7 @@ fn insert_source_path(state: &AppState, source_id: i64, path: &str, is_public: b
 }
 
 async fn router_no_auth(state: AppState) -> axum::Router {
-    build_router(state, PROXY_URL).await
+    build_router(state, PROXY_URL, None).await
 }
 
 async fn router_with_auth(state: AppState) -> axum::Router {
@@ -75,7 +75,7 @@ async fn router_with_auth(state: AppState) -> axum::Router {
         username: "test".into(),
         password: "test".into(),
     };
-    build_router(state.clone(), PROXY_URL)
+    build_router(state.clone(), PROXY_URL, None)
         .await
         .layer(middleware::from_fn(basic_auth_middleware))
         .layer(axum::Extension(auth_config))

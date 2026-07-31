@@ -9,7 +9,8 @@ export default tseslint.config(
       ".next/**", 
       "node_modules/**", 
       "target/**",
-      "public/windows-ui/**"
+      "public/windows-ui/**",
+      ".remember/**"
     ],
   }
 );

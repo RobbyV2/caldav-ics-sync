@@ -26,7 +26,7 @@ Built with Rust (Axum) backend and Next.js frontend. All configuration and data 
 - **Sync options** -- Control whether to sync past events (`sync_all`) and whether to preserve local CalDAV events not in ICS (`keep_local`)
 - **Trailing slash compatibility** -- Automatically retries CalDAV requests with toggled trailing slash for servers like Feishu/Nextcloud
 - **Password security** -- Passwords are never returned in API responses; stored in plain text for CalDAV authentication. Sending an empty password on update preserves the existing value
-- **OpenAPI spec** -- Full API documentation at `/api/openapi.json`
+- **OpenAPI spec** -- Full API documentation at `/api/openapi.json`, with Swagger UI at `/api/swagger-ui`
 - **Health checks** -- `/api/health` and `/api/health/detailed` endpoints with live status in the UI
 - **Public ICS URLs** - Optionally expose ICS feeds without authentication for Google Calendar and similar services
 - **Windows Fluent UI** -- Dashboard styled with windows-ui-fabric for a native Windows look
@@ -85,6 +85,33 @@ All sync configuration (sources, destinations, credentials) is managed through t
 | `AUTH_USERNAME`      | _(unset)_                 | Basic Auth username (required to enable auth)          |
 | `AUTH_PASSWORD`      | _(unset)_                 | Plain text password (mutually exclusive with hash)     |
 | `AUTH_PASSWORD_HASH` | _(unset)_                 | Argon2 PHC-format hash (mutually exclusive with above) |
+
+### Rate limiting
+
+Disabled unless `RATE_LIMIT_PER_SECOND` is set. It covers `/api` and `/ics`; proxied frontend assets are never rate limited.
+
+| Variable                 | Default   | Description                                       |
+| ------------------------ | --------- | ------------------------------------------------- |
+| `RATE_LIMIT_PER_SECOND`  | _(unset)_ | Requests per second per client; unset disables it |
+| `RATE_LIMIT_BURST`       | `60`      | Burst allowance above the sustained rate          |
+| `RATE_LIMIT_TRUST_PROXY` | `false`   | Key clients by `X-Forwarded-For` / `X-Real-IP`    |
+
+> [!IMPORTANT]
+> Behind a reverse proxy, every request arrives with the proxy's address, so all clients share one bucket. Set `RATE_LIMIT_TRUST_PROXY=true` there. Only enable it with a trusted proxy in front, since clients can forge those headers.
+
+### API docs
+
+| Variable     | Default   | Description                                               |
+| ------------ | --------- | --------------------------------------------------------- |
+| `SWAGGER_UI` | _(unset)_ | Set to `false` to serve only the raw spec, without the UI |
+
+Swagger UI is served at `/api/swagger-ui`, and the raw spec at `/api/openapi.json`. Both sit behind Basic Auth when it is enabled.
+
+### Web UI
+
+| Variable              | Default         | Description                                 |
+| --------------------- | --------------- | ------------------------------------------- |
+| `NEXT_PUBLIC_API_URL` | _(same origin)_ | Point the UI at a backend on another origin |
 
 ## Concepts
 

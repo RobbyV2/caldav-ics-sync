@@ -80,7 +80,22 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let app = build_router(app_state.clone(), &proxy_url)
+    let rate_limit = cfg.rate_limit();
+    match rate_limit {
+        Some(limit) => info!(
+            "Rate limiting /api and /ics: {} req/s, burst {} (keyed by {})",
+            limit.per_second,
+            limit.burst,
+            if limit.trust_proxy {
+                "forwarded client IP"
+            } else {
+                "peer IP"
+            }
+        ),
+        None => info!("Rate limiting disabled (RATE_LIMIT_PER_SECOND not set)"),
+    }
+
+    let app = build_router(app_state.clone(), &proxy_url, rate_limit)
         .await
         .layer(middleware::from_fn(basic_auth_middleware))
         .layer(axum::Extension(auth_config))
@@ -93,9 +108,14 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting server");
     info!("Listening on http://{}", addr);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `into_make_service_with_connect_info` supplies the peer address that the rate
+    // limiter keys on; without it every request fails key extraction.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("Server shutdown complete");
 

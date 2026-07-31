@@ -25,3 +25,6 @@ next-env.d.ts
 
 # Vendored libs
 public/windows-ui
+
+# Local tooling state (git-ignored)
+.remember

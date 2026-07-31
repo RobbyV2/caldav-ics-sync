@@ -12,7 +12,10 @@ RUN cargo build --release
 FROM oven/bun:1.1 AS js-builder
 WORKDIR /app
 
-COPY package.json bun.lock* ./
+# Not a glob: `bun install --frozen-lockfile` silently re-resolves everything when the
+# lockfile is absent, so a missing bun.lock must fail the build instead of quietly
+# producing an image with unpinned dependencies.
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 COPY . ./
@@ -23,11 +26,11 @@ RUN bun run build
 FROM debian:bookworm-slim AS runner
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 curl unzip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
 
-# Install bun for running Next.js standalone server
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+# Copy bun from its official image rather than curl-piping the installer at build time:
+# no network fetch of an unpinned script, and the version tracks the js-builder stage.
+COPY --from=oven/bun:1.1 /usr/local/bin/bun /usr/local/bin/bun
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -51,9 +54,13 @@ ENV DATA_DIR=/data
 
 COPY <<'EOF' /app/start.sh
 #!/bin/sh
+set -e
+
 bun server.js &
 NEXT_PID=$!
 trap "kill $NEXT_PID 2>/dev/null; exit" TERM INT
+# Give Next.js a moment to bind before the Rust server starts proxying to it.
+sleep 1
 ./server
 kill $NEXT_PID 2>/dev/null
 EOF

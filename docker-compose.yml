@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    ports:
+      - '6765:6765'
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=6765
+      - PORT=6766
+      - DATA_DIR=/data
+      # Optional HTTP Basic Auth (set AUTH_USERNAME plus one of the password vars)
+      # - AUTH_USERNAME=admin
+      # - AUTH_PASSWORD=changeme
+      # Optional rate limiting for /api and /ics (unset = disabled)
+      # - RATE_LIMIT_PER_SECOND=10
+      # - RATE_LIMIT_BURST=60
+      # Set when running behind a reverse proxy, so clients are keyed by their
+      # forwarded IP rather than all sharing the proxy's address.
+      # - RATE_LIMIT_TRUST_PROXY=true
+    volumes:
+      - caldav-data:/data
+    restart: unless-stopped
+
+volumes:
+  caldav-data:

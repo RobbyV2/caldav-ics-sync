@@ -70,5 +70,14 @@ async fn openapi_json() -> impl IntoResponse {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/openapi.json", get(openapi_json))
+    let router = Router::new().route("/openapi.json", get(openapi_json));
+
+    // Enabled by default; set SWAGGER_UI=false to serve only the raw spec.
+    if std::env::var("SWAGGER_UI").is_ok_and(|v| v == "false" || v == "0") {
+        router
+    } else {
+        use utoipa_swagger_ui::SwaggerUi;
+        tracing::info!("Swagger UI enabled at /api/swagger-ui");
+        router.merge(SwaggerUi::new("/swagger-ui").url("/api/openapi.json", ApiDoc::openapi()))
+    }
 }
