@@ -12,6 +12,14 @@ install:
   cd {{ROOT}} && bun install
   cargo install taplo-cli
 
+# Set the release version everywhere (Cargo.toml, Cargo.lock, package.json)
+# Only the [package] version is line-anchored, so dependency versions are untouched.
+bump VERSION:
+  cd {{ROOT}} && perl -0pi -e 's/^version = "[^"]*"/version = "{{VERSION}}"/m' Cargo.toml
+  cd {{ROOT}} && perl -0pi -e 's/"version": "[^"]*"/"version": "{{VERSION}}"/' package.json
+  cd {{ROOT}} && cargo check --quiet
+  @echo "Bumped to {{VERSION}} -- commit as 'v{{VERSION}}', then: git tag v{{VERSION}} && git push origin main v{{VERSION}}"
+
 # Amend no edit
 amend:
   git commit --amend --no-edit

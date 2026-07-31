@@ -30,6 +30,17 @@ jobs:
       - name: Install JS Deps
         run: bun install --frozen-lockfile
 
+      # Cargo.toml is the source of truth; package.json only mirrors it.
+      - name: Version Sync
+        run: |
+          cargo_version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          pkg_version=$(grep -m1 '"version":' package.json | cut -d'"' -f4)
+          echo "Cargo.toml=$cargo_version package.json=$pkg_version"
+          if [ "$cargo_version" != "$pkg_version" ]; then
+            echo "::error::version mismatch - run 'just src bump $cargo_version'"
+            exit 1
+          fi
+
       - name: Check JS Formatting
         run: bun run format:check
 

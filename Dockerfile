@@ -1,7 +1,12 @@
 # Stage 1: Build the Rust Backend
-FROM rust:1.93-slim-bookworm AS rust-builder
+# Must be new enough for the dependency tree's toolchain requirements, which move with
+# dependency bumps: libsqlite3-sys (via rusqlite) needs the stabilized `cfg_select`.
+# CI's other jobs build on `stable`, so this pin is what lags and breaks first.
+FROM rust:1.96-slim-bookworm AS rust-builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+# curl is a build-time requirement of utoipa-swagger-ui, whose build script downloads
+# the Swagger UI bundle and shells out to curl to do it.
+RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
@@ -9,7 +14,9 @@ COPY src ./src
 RUN cargo build --release
 
 # Stage 2: Build the Next.js Frontend
-FROM oven/bun:1.1 AS js-builder
+# Must stay on the same bun minor as the bun that writes bun.lock: the text lockfile
+# format arrived in 1.2, so older images fail with "Unknown lockfile version".
+FROM oven/bun:1.3 AS js-builder
 WORKDIR /app
 
 # Not a glob: `bun install --frozen-lockfile` silently re-resolves everything when the
@@ -30,7 +37,7 @@ RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf 
 
 # Copy bun from its official image rather than curl-piping the installer at build time:
 # no network fetch of an unpinned script, and the version tracks the js-builder stage.
-COPY --from=oven/bun:1.1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=oven/bun:1.3 /usr/local/bin/bun /usr/local/bin/bun
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
